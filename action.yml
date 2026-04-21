@@ -1,0 +1,25 @@
+name: 'Sanshain Action'
+description: 'Manage OpenAPI specs with Sanshain Service (Provide/Require)'
+author: 'Patrick Zimmer'
+inputs:
+  command:
+    description: 'The command to execute (provide or require)'
+    required: true
+  token:
+    description: 'Sanshain API token (optional if set via SANSHAIN_TOKEN secret)'
+    required: false
+  working-directory:
+    description: 'Directory where sanshain.yaml is located'
+    required: false
+    default: '.'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Run Sanshain CLI
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        SANSHAIN_TOKEN: ${{ inputs.token || env.SANSHAIN_TOKEN }}
+      run: |
+        npx sanshainjs ${{ inputs.command }}

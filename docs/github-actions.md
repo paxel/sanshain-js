@@ -1,101 +1,52 @@
-# Sanshain GitHub Actions Integration
+# GitHub Actions Integration
 
-This guide describes how to integrate the Sanshain CLI into your GitHub Actions workflows for TypeScript/Node.js projects.
+While `SanshainJS` works on any CI platform using standard CLI commands, this guide covers the specific features available for GitHub Actions users.
 
-## Prerequisites
+> **Note**: For general CI/CD concepts (like `package.json` integration), please see the [Generic CI/CD Guide](ci-integration.md).
 
-1. A `sanshain.yaml` file in your repository root.
-2. A `SANSHAIN_TOKEN` stored as a GitHub Repository Secret.
+## 1. Native GitHub Action
 
-## 1. Automatically Publish OpenAPI Spec (`provide`)
+If you want a declarative workflow or want to avoid installing the CLI as a dependency, you can use the native Sanshain Action.
 
-Run this workflow whenever changes are merged to the `main` branch to keep the Sanshain Service up to date.
-
-```yaml
-name: Publish OpenAPI Spec
-on:
-  push:
-    branches:
-      - main
-
-jobs:
-  provide:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-      
-      - name: Install Sanshain CLI
-        run: npm install -g sanshainjs
-      
-      - name: Provide Spec
-        run: sanshain provide
-        env:
-          SANSHAIN_TOKEN: ${{ secrets.SANSHAIN_TOKEN }}
-```
-
-## 2. Consume OpenAPI Specs and Generate Client (`require`)
-
-Run this workflow during your build process to download required specs and generate type-safe clients.
+### Publish OpenAPI Spec on Merge
 
 ```yaml
-name: Build and Generate Client
-on: [push, pull_request]
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-      
-      - name: Install Dependencies
-        run: npm install
-      
-      - name: Download Required Specs
-        run: npx sanshain require
-        env:
-          SANSHAIN_TOKEN: ${{ secrets.SANSHAIN_TOKEN }}
-      
-      - name: Generate TypeScript Client
-        run: npx openapi-typescript ./generated/service_bundle.yaml -o ./src/api/client.ts
-      
-      - name: Build
-        run: npm run build
+- name: Provide Spec
+  uses: paxel/sanshain/sanshain-js@v1 # Path to the action in this repo
+  with:
+    command: provide
+    token: ${{ secrets.SANSHAIN_TOKEN }}
 ```
 
-## Integration with `openapi-typescript`
+### Download Specs during Build
 
-The Sanshain CLI is designed to work seamlessly with `openapi-typescript`. Because Sanshain returns a single merged spec with deduplicated schemas (via `/require-bundle`), you can generate a clean, conflict-free client:
-
-1. Define your dependencies in `sanshain.yaml`.
-2. Run `sanshain require`.
-3. Use `openapi-typescript` on the output file.
-
-Example `sanshain.yaml`:
 ```yaml
-sanshainUrl: https://sanshain.example.com
-clientName: my-web-app
-requires:
-  - serviceName: user-service
-    outputDirectory: ./generated
-    endpoints:
-      - method: GET
-        path: /api/v1/users
-      - method: POST
-        path: /api/v1/users
+- name: Require Specs
+  uses: paxel/sanshain/sanshain-js@v1
+  with:
+    command: require
+    token: ${{ secrets.SANSHAIN_TOKEN }}
 ```
 
-Generated command:
-```bash
-npx sanshain require
-npx openapi-typescript ./generated/user-service_bundle.yaml -o ./src/api/user-client.ts
-```
+---
+
+## Comparison with Maven Plugin
+
+| Feature | Maven Plugin (Java) | SanshainJS (TypeScript) |
+|---|---|---|
+| **Config File** | `sanshain.yaml` | `sanshain.yaml` |
+| **Lifecycle** | Attached to `initialize` phase | Attached to `prebuild` script |
+| **Command** | `mvn sanshain:provide` | `sanshain provide` |
+| **Auth** | `settings.xml` or `SANSHAIN_TOKEN` | `SANSHAIN_TOKEN` env var |
+| **Branch** | Auto-detected from Git | Auto-detected from Git / GitHub Actions |
 
 ## CI Branch Detection
 
 The CLI automatically detects the current branch using the `GITHUB_REF_NAME` environment variable provided by GitHub Actions. This ensures that when you run `require` on a feature branch, it will first look for endpoints on that same branch in Sanshain, falling back to `main` if not found.
+
+## How Files are Handled in CI
+
+When you run `sanshain require` in a GitHub Action:
+1. The files are downloaded to the GitHub Runner's local disk (the workspace).
+2. Any subsequent steps in the same job (like `npm run build` or `openapi-typescript`) see these files exactly as if they were on your own computer.
+3. These files are typically NOT committed back to your repository; they are generated on-the-fly during the build.

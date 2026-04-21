@@ -7,24 +7,27 @@ Sanshain (Japanese for "Sunshine") is a specialized REST service designed to man
 ## Features
 
 - **CLI Tool**: Easy-to-use commands for `provide` and `require` operations.
+- **Maven-like Lifecycle**: Easily integrates into `package.json` scripts for automatic build-time updates.
 - **Deduplication**: Automatically handles shared DTOs using Sanshain's bundle API.
 - **Branch Support**: Intelligent Git branch detection and automatic fallback to `main`.
 - **GZIP Compression**: Efficient data transfer for large OpenAPI specifications.
-- **GitHub Actions Integration**: Designed to be used in CI/CD pipelines.
+- **CI/CD Ready**: Built-in support for any CI/CD platform (GitLab, Jenkins, GitHub, etc.).
+
+## How it Works (Data Flow)
+
+SanshainJS acts as a bridge between your microservices. It follows a "Download-then-Generate" pattern:
+
+1.  **Configure**: Define which services you need in `sanshain.yaml`.
+2.  **Download**: Run `sanshain require`. The CLI fetches OpenAPI specs from the **Sanshain Service** and saves them as `.yaml` files in your local `outputDirectory`.
+3.  **Generate**: Use a tool like `openapi-typescript` to turn those local `.yaml` files into `.ts` code.
+4.  **Develop**: Your application imports the generated TypeScript code with full autocomplete and type safety.
+
+This ensures your service only knows about the specific endpoints it actually uses, kept in sync via your CI/CD pipeline.
 
 ## Installation
 
 ```bash
-# Clone the repository
-git clone https://github.com/paxel/sanshain.git
-cd sanshain/sanshain-js
-
-# Install dependencies and build
-npm install
-npm run build
-
-# Link the CLI (optional)
-npm link
+npm install --save-dev sanshainjs
 ```
 
 ## Configuration (`sanshain.yaml`)
@@ -50,6 +53,19 @@ requires:
         path: /api/v1/login
 ```
 
+## Automatic Integration (Recommended)
+
+To make `SanshainJS` behave like the Maven plugin (running automatically during build), add it to your `package.json`:
+
+```json
+"scripts": {
+  "prebuild": "sanshain require",
+  "build": "tsc"
+}
+```
+
+Now, every time you run `npm run build`, it will first download the latest required OpenAPI specs.
+
 ## CLI Usage
 
 ### Provide
@@ -68,9 +84,12 @@ Download the required endpoint snippets and bundles as defined in `sanshain.yaml
 sanshain require
 ```
 
-## GitHub Actions
+## CI/CD Integration
 
-For details on how to integrate `SanshainJS` into your GitHub Actions workflows, see [docs/github-actions.md](docs/github-actions.md).
+`SanshainJS` is platform-agnostic. For detailed guides on integrating it into your CI/CD pipeline (GitLab, Jenkins, GitHub Actions, etc.), see:
+
+- [Generic CI/CD Integration Guide](docs/ci-integration.md)
+- [GitHub Actions Specific Guide](docs/github-actions.md)
 
 ## License
 
