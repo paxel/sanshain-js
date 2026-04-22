@@ -5,6 +5,13 @@
   "bin": {
     "sanshain": "bin/sanshain.js"
   },
+  "files": [
+    "dist",
+    "bin",
+    "README.md",
+    "LICENSE",
+    "action.yml"
+  ],
   "scripts": {
     "build": "tsc",
     "test": "jest"
