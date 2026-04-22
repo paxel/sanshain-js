@@ -1,11 +1,12 @@
 import axios, { AxiosInstance, AxiosResponse } from 'axios';
-import { compress } from './utils';
+import { compress, decompress, sanitize } from './utils';
 
 export interface ProvidePayload {
   servicename: string;
   branch: string;
   openapi_yaml: string;
   dry_run?: boolean;
+  api_type?: string;
 }
 
 export interface ProvideAsyncApiPayload {
@@ -13,6 +14,7 @@ export interface ProvideAsyncApiPayload {
   branch: string;
   asyncapi_yaml: string;
   dry_run?: boolean;
+  api_type?: string;
 }
 
 export interface ProvideProtoPayload {
@@ -20,6 +22,7 @@ export interface ProvideProtoPayload {
   branch: string;
   proto_content: string;
   dry_run?: boolean;
+  api_type?: string;
 }
 
 export interface RequireBundleEndpoint {
@@ -46,6 +49,7 @@ export class SanshainClient {
     this.axiosInstance = axios.create({
       baseURL: baseUrl,
       validateStatus: (status) => status >= 200 && status < 300,
+      responseType: 'arraybuffer'
     });
 
     if (this.token) {
@@ -64,18 +68,44 @@ export class SanshainClient {
         rejectUnauthorized: false
       });
     }
+
+    this.axiosInstance.interceptors.response.use(
+      (response) => response,
+      async (error) => {
+        if (error.response) {
+          let body = error.response.data;
+          if (error.response.headers['content-encoding'] === 'gzip' && (body instanceof Buffer || body instanceof Uint8Array)) {
+            try {
+              body = (await decompress(Buffer.from(body))).toString('utf8');
+            } catch (e) {
+              body = body.toString();
+            }
+          } else if (body instanceof Buffer || body instanceof Uint8Array) {
+            body = Buffer.from(body).toString('utf8');
+          } else if (typeof body !== 'string') {
+            try {
+              body = JSON.stringify(body);
+            } catch (e) {
+              body = String(body);
+            }
+          }
+          error.message = `Request failed with status ${error.response.status}: ${sanitize(body)}`;
+        }
+        return Promise.reject(error);
+      }
+    );
   }
 
   async provide(payload: ProvidePayload, compression: boolean = false): Promise<void> {
-    await this.post('/provide', payload, compression);
+    await this.post('/provide', { ...payload, api_type: 'openapi' }, compression);
   }
 
   async provideAsyncApi(payload: ProvideAsyncApiPayload, compression: boolean = false): Promise<void> {
-    await this.post('/provide/asyncapi', payload, compression);
+    await this.post('/provide/asyncapi', { ...payload, api_type: 'asyncapi' }, compression);
   }
 
   async provideProto(payload: ProvideProtoPayload, compression: boolean = false): Promise<void> {
-    await this.post('/provide/grpc', payload, compression);
+    await this.post('/provide/grpc', { ...payload, api_type: 'proto' }, compression);
   }
 
   private async post(url: string, payload: any, compression: boolean = false): Promise<void> {
@@ -117,37 +147,50 @@ export class SanshainClient {
       path,
       method,
       timeout,
-      dry_run
+      dry_run,
+      api_type: api_type || 'openapi'
     };
 
-    const response: AxiosResponse<string> = await this.axiosInstance.get(url, {
+    const response: AxiosResponse = await this.axiosInstance.get(url, {
       params,
-      responseType: 'text'
+      responseType: 'arraybuffer'
     });
 
-    return response.data;
+    let body = response.data;
+    if (response.headers['content-encoding'] === 'gzip') {
+      body = await decompress(Buffer.from(body));
+    }
+    return Buffer.from(body).toString('utf8');
   }
 
   async requireBundle(
     payload: RequireBundlePayload,
     compression: boolean = false
   ): Promise<string> {
-    let data: any = payload;
+    const dataWithFallback = {
+      ...payload,
+      api_type: payload.api_type || 'openapi'
+    };
+    let data: any = dataWithFallback;
     const headers: Record<string, string> = {
       'Content-Type': 'application/json'
     };
 
     if (compression) {
-      const json = JSON.stringify(payload);
+      const json = JSON.stringify(dataWithFallback);
       data = await compress(json);
       headers['Content-Encoding'] = 'gzip';
     }
 
-    const response: AxiosResponse<string> = await this.axiosInstance.post('/require-bundle', data, {
+    const response: AxiosResponse = await this.axiosInstance.post('/require-bundle', data, {
       headers,
-      responseType: 'text'
+      responseType: 'arraybuffer'
     });
 
-    return response.data;
+    let body = response.data;
+    if (response.headers['content-encoding'] === 'gzip') {
+      body = await decompress(Buffer.from(body));
+    }
+    return Buffer.from(body).toString('utf8');
   }
 }
