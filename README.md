@@ -36,12 +36,11 @@ npm install --save-dev sanshainjs
 
 ```yaml
 sanshainUrl: http://localhost:3000
-clientName: my-ts-service
+serviceName: my-ts-service
 compression: true
 
-provide:
-  serviceName: my-ts-service
-  openApiFile: src/docs/openapi.yaml
+provides:
+  - file: src/docs/openapi.yaml
 
 requires:
   - serviceName: auth-service

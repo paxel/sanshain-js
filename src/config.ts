@@ -9,6 +9,7 @@ export interface EndpointConfig {
 
 export interface RequireConfig {
   serviceName: string;
+  apiType?: string;
   branch?: string;
   outputDirectory: string;
   timeout?: number;
@@ -16,17 +17,25 @@ export interface RequireConfig {
 }
 
 export interface ProvideConfig {
-  serviceName: string;
-  openApiFile: string;
+  file?: string;
+  apiType?: string;
   branch?: string;
+  // Backward compatibility
+  openApiFile?: string;
+  asyncApiFile?: string;
+  protoFile?: string;
+  serviceName?: string; // removed from top level in doc, but keeping for compatibility
 }
 
 export interface SanshainConfig {
   sanshainUrl: string;
-  clientName: string;
+  serviceName: string;
+  clientName?: string; // alias
   timeout?: number;
   compression?: boolean;
+  bestEffort?: boolean;
   provide?: ProvideConfig;
+  provides?: ProvideConfig[];
   requires?: RequireConfig[];
 }
 
@@ -39,26 +48,59 @@ export function loadConfig(configPath: string = 'sanshain.yaml'): SanshainConfig
   const fileContents = fs.readFileSync(fullPath, 'utf8');
   const config = yaml.load(fileContents) as SanshainConfig;
 
+  applyEnvOverrides(config);
   validateConfig(config);
 
   return config;
+}
+
+function applyEnvOverrides(config: SanshainConfig): void {
+  if (process.env.SANSHAIN_URL) {
+    config.sanshainUrl = process.env.SANSHAIN_URL;
+  }
+  if (process.env.SANSHAIN_SERVICE_NAME) {
+    config.serviceName = process.env.SANSHAIN_SERVICE_NAME;
+  }
+  if (process.env.SANSHAIN_CLIENT_NAME) {
+    config.clientName = process.env.SANSHAIN_CLIENT_NAME;
+  }
+  if (process.env.SANSHAIN_TIMEOUT) {
+    config.timeout = parseInt(process.env.SANSHAIN_TIMEOUT, 10);
+  }
+  if (process.env.SANSHAIN_COMPRESSION) {
+    config.compression = process.env.SANSHAIN_COMPRESSION === 'true';
+  }
+  if (process.env.SANSHAIN_BEST_EFFORT) {
+    config.bestEffort = process.env.SANSHAIN_BEST_EFFORT === 'true';
+  }
 }
 
 function validateConfig(config: any): void {
   if (!config.sanshainUrl) {
     throw new Error('Missing required field: sanshainUrl');
   }
-  if (!config.clientName) {
-    throw new Error('Missing required field: clientName');
+  if (!config.serviceName && config.clientName) {
+    config.serviceName = config.clientName;
+  }
+  if (!config.serviceName) {
+    throw new Error('Missing required field: serviceName');
   }
 
+  const validateProvide = (p: any, index?: number) => {
+    const context = index !== undefined ? `provides[${index}]` : 'provide';
+    if (!p.file && !p.openApiFile && !p.asyncApiFile && !p.protoFile) {
+      throw new Error(`At least one of file, openApiFile, asyncApiFile, or protoFile must be specified in ${context}`);
+    }
+  };
+
   if (config.provide) {
-    if (!config.provide.serviceName) {
-      throw new Error('Missing required field in provide: serviceName');
+    validateProvide(config.provide);
+  }
+  if (config.provides) {
+    if (!Array.isArray(config.provides)) {
+      throw new Error('Field provides must be an array');
     }
-    if (!config.provide.openApiFile) {
-      throw new Error('Missing required field in provide: openApiFile');
-    }
+    config.provides.forEach((p: any, index: number) => validateProvide(p, index));
   }
 
   if (config.requires) {

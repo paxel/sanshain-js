@@ -8,6 +8,20 @@ export interface ProvidePayload {
   dry_run?: boolean;
 }
 
+export interface ProvideAsyncApiPayload {
+  servicename: string;
+  branch: string;
+  asyncapi_yaml: string;
+  dry_run?: boolean;
+}
+
+export interface ProvideProtoPayload {
+  servicename: string;
+  branch: string;
+  proto_content: string;
+  dry_run?: boolean;
+}
+
 export interface RequireBundleEndpoint {
   path: string;
   method: string;
@@ -20,6 +34,7 @@ export interface RequireBundlePayload {
   endpoints: RequireBundleEndpoint[];
   timeout?: number;
   dry_run?: boolean;
+  api_type?: string;
 }
 
 export class SanshainClient {
@@ -52,6 +67,18 @@ export class SanshainClient {
   }
 
   async provide(payload: ProvidePayload, compression: boolean = false): Promise<void> {
+    await this.post('/provide', payload, compression);
+  }
+
+  async provideAsyncApi(payload: ProvideAsyncApiPayload, compression: boolean = false): Promise<void> {
+    await this.post('/provide/asyncapi', payload, compression);
+  }
+
+  async provideProto(payload: ProvideProtoPayload, compression: boolean = false): Promise<void> {
+    await this.post('/provide/grpc', payload, compression);
+  }
+
+  private async post(url: string, payload: any, compression: boolean = false): Promise<void> {
     let data: any = payload;
     const headers: Record<string, string> = {
       'Content-Type': 'application/json'
@@ -63,7 +90,7 @@ export class SanshainClient {
       headers['Content-Encoding'] = 'gzip';
     }
 
-    await this.axiosInstance.post('/provide', data, { headers });
+    await this.axiosInstance.post(url, data, { headers });
   }
 
   async require(
@@ -73,8 +100,16 @@ export class SanshainClient {
     path: string,
     method: string,
     timeout?: number,
-    dry_run?: boolean
+    dry_run?: boolean,
+    api_type?: string
   ): Promise<string> {
+    let url = '/require';
+    if (api_type === 'asyncapi') {
+      url = '/require/asyncapi';
+    } else if (api_type === 'proto') {
+      url = '/require/grpc';
+    }
+
     const params = {
       clientname,
       servicename,
@@ -85,7 +120,7 @@ export class SanshainClient {
       dry_run
     };
 
-    const response: AxiosResponse<string> = await this.axiosInstance.get('/require', {
+    const response: AxiosResponse<string> = await this.axiosInstance.get(url, {
       params,
       responseType: 'text'
     });
