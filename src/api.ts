@@ -74,7 +74,7 @@ export class SanshainClient {
       async (error) => {
         if (error.response) {
           let body = error.response.data;
-          if (error.response.headers['content-encoding'] === 'gzip' && (body instanceof Buffer || body instanceof Uint8Array)) {
+          if (error.response.headers?.['content-encoding'] === 'gzip' && (body instanceof Buffer || body instanceof Uint8Array)) {
             try {
               body = (await decompress(Buffer.from(body))).toString('utf8');
             } catch (e) {
@@ -157,7 +157,7 @@ export class SanshainClient {
     });
 
     let body = response.data;
-    if (response.headers['content-encoding'] === 'gzip') {
+    if (response.headers?.['content-encoding'] === 'gzip') {
       body = await decompress(Buffer.from(body));
     }
     return Buffer.from(body).toString('utf8');
@@ -188,7 +188,7 @@ export class SanshainClient {
     });
 
     let body = response.data;
-    if (response.headers['content-encoding'] === 'gzip') {
+    if (response.headers?.['content-encoding'] === 'gzip') {
       body = await decompress(Buffer.from(body));
     }
     return Buffer.from(body).toString('utf8');

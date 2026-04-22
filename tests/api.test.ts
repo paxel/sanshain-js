@@ -22,11 +22,11 @@ describe('Sanshain API Client', () => {
     };
     await client.provide(payload);
 
-    expect(mockedAxios.post).toHaveBeenCalledWith('/provide', payload, expect.any(Object));
+    expect(mockedAxios.post).toHaveBeenCalledWith('/provide', { ...payload, api_type: 'openapi' }, expect.any(Object));
   });
 
   it('should call require endpoint with correct params', async () => {
-    mockedAxios.get.mockResolvedValue({ status: 200, data: 'yaml content' });
+    mockedAxios.get.mockResolvedValue({ status: 200, data: 'yaml content', headers: {} });
 
     const content = await client.require('client', 'service', 'main', '/path', 'GET');
 
@@ -39,13 +39,14 @@ describe('Sanshain API Client', () => {
         path: '/path',
         method: 'GET',
         timeout: undefined,
-        dry_run: undefined
+        dry_run: undefined,
+        api_type: 'openapi'
       }
     }));
   });
 
   it('should call require-bundle endpoint with correct data', async () => {
-    mockedAxios.post.mockResolvedValue({ status: 200, data: 'merged yaml' });
+    mockedAxios.post.mockResolvedValue({ status: 200, data: 'merged yaml', headers: {} });
 
     const payload = {
       clientname: 'client',
@@ -56,6 +57,6 @@ describe('Sanshain API Client', () => {
     const content = await client.requireBundle(payload);
 
     expect(content).toBe('merged yaml');
-    expect(mockedAxios.post).toHaveBeenCalledWith('/require-bundle', payload, expect.any(Object));
+    expect(mockedAxios.post).toHaveBeenCalledWith('/require-bundle', { ...payload, api_type: 'openapi' }, expect.any(Object));
   });
 });
