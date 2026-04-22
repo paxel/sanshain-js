@@ -14,11 +14,10 @@ describe('Configuration parsing', () => {
   it('should parse a valid sanshain.yaml', () => {
     const yamlContent = `
 sanshainUrl: http://localhost:3000
-clientName: test-service
+serviceName: test-service
 timeout: 60
 compression: true
 provide:
-  serviceName: test-service
   openApiFile: spec.yaml
 requires:
   - serviceName: other-service
@@ -31,10 +30,10 @@ requires:
 
     const config = loadConfig(testYamlPath);
     expect(config.sanshainUrl).toBe('http://localhost:3000');
-    expect(config.clientName).toBe('test-service');
+    expect(config.serviceName).toBe('test-service');
     expect(config.timeout).toBe(60);
     expect(config.compression).toBe(true);
-    expect(config.provide?.serviceName).toBe('test-service');
+    expect(config.provide?.openApiFile).toBe('spec.yaml');
     expect(config.requires?.[0].serviceName).toBe('other-service');
   });
 
@@ -44,6 +43,6 @@ sanshainUrl: http://localhost:3000
 `;
     fs.writeFileSync(testYamlPath, yamlContent);
 
-    expect(() => loadConfig(testYamlPath)).toThrow('Missing required field: clientName');
+    expect(() => loadConfig(testYamlPath)).toThrow('Missing required field: serviceName');
   });
 });
