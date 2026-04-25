@@ -33,13 +33,27 @@ program
       const defaultBranch = globalOptions.branch || await getCurrentBranch() || 'main';
       const insecure = globalOptions.insecure || false;
 
+      const strict = config.strict || false;
+
+      if (!config.serviceName) {
+        if (strict) {
+          console.error('serviceName is required (in sanshain.yaml or via SANSHAIN_SERVICE_NAME)');
+          process.exit(1);
+        }
+        console.warn('⚠ No serviceName configured. Skipping provide. Set strict: true to fail in this case.');
+        return;
+      }
+
       const provides = [];
       if (config.provide) provides.push(config.provide);
       if (config.provides) provides.push(...config.provides);
 
       if (provides.length === 0) {
-        console.error('No provide section in sanshain.yaml');
-        if (!bestEffort) process.exit(1);
+        if (strict) {
+          console.error('No provide section in sanshain.yaml');
+          process.exit(1);
+        }
+        console.warn('⚠ No provide configuration found in sanshain.yaml. Skipping. Set strict: true to fail in this case.');
         return;
       }
 
@@ -125,7 +139,11 @@ program
       }
 
       if (!provided) {
-        console.warn('No specification files found to provide.');
+        if (strict) {
+          console.error('No specification files found to provide.');
+          process.exit(1);
+        }
+        console.warn('⚠ No specification files found to provide. Skipping. Set strict: true to fail in this case.');
       } else {
         console.log('Successfully provided spec(s).');
       }
@@ -159,8 +177,23 @@ program
       const branch = globalOptions.branch || await getCurrentBranch() || 'main';
       const insecure = globalOptions.insecure || false;
 
+      const strict = config.strict || false;
+
+      if (!config.serviceName) {
+        if (strict) {
+          console.error('serviceName is required (in sanshain.yaml or via SANSHAIN_SERVICE_NAME)');
+          process.exit(1);
+        }
+        console.warn('⚠ No serviceName configured. Skipping require. Set strict: true to fail in this case.');
+        return;
+      }
+
       if (!config.requires || config.requires.length === 0) {
-        console.log('No requirements defined in sanshain.yaml');
+        if (strict) {
+          console.error('No requires configured in sanshain.yaml');
+          process.exit(1);
+        }
+        console.warn('⚠ No requires configured in sanshain.yaml. Skipping. Set strict: true to fail in this case.');
         return;
       }
 

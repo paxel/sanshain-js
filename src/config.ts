@@ -35,6 +35,7 @@ export interface SanshainConfig {
   timeout?: number;
   compression?: boolean;
   bestEffort?: boolean;
+  strict?: boolean;
   provide?: ProvideConfig;
   provides?: ProvideConfig[];
   requires?: RequireConfig[];
@@ -74,6 +75,9 @@ function applyEnvOverrides(config: SanshainConfig): void {
   if (process.env.SANSHAIN_BEST_EFFORT) {
     config.bestEffort = process.env.SANSHAIN_BEST_EFFORT === 'true';
   }
+  if (process.env.SANSHAIN_STRICT) {
+    config.strict = process.env.SANSHAIN_STRICT === 'true';
+  }
 }
 
 function validateConfig(config: any): void {
@@ -82,9 +86,6 @@ function validateConfig(config: any): void {
   }
   if (!config.serviceName && config.clientName) {
     config.serviceName = config.clientName;
-  }
-  if (!config.serviceName) {
-    throw new Error('Missing required field: serviceName');
   }
 
   const validateProvide = (p: any, index?: number) => {
