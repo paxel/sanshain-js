@@ -39,10 +39,10 @@ requires:
 
   it('should throw error on missing required field', () => {
     const yamlContent = `
-sanshainUrl: http://localhost:3000
+serviceName: test-service
 `;
     fs.writeFileSync(testYamlPath, yamlContent);
 
-    expect(() => loadConfig(testYamlPath)).toThrow('Missing required field: serviceName');
+    expect(() => loadConfig(testYamlPath)).toThrow('Missing required field: sanshainUrl');
   });
 });

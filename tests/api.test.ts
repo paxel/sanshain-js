@@ -30,7 +30,7 @@ describe('Sanshain API Client', () => {
 
     const content = await client.require('client', 'service', 'main', '/path', 'GET');
 
-    expect(content).toBe('yaml content');
+    expect(content.content).toBe('yaml content');
     expect(mockedAxios.get).toHaveBeenCalledWith('/require', expect.objectContaining({
       params: {
         clientname: 'client',
@@ -56,7 +56,7 @@ describe('Sanshain API Client', () => {
     };
     const content = await client.requireBundle(payload);
 
-    expect(content).toBe('merged yaml');
+    expect(content.content).toBe('merged yaml');
     expect(mockedAxios.post).toHaveBeenCalledWith('/require-bundle', { ...payload, api_type: 'openapi' }, expect.any(Object));
   });
 });
