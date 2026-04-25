@@ -7,6 +7,7 @@ export interface ProvidePayload {
   openapi_yaml: string;
   dry_run?: boolean;
   api_type?: string;
+  base_version?: number;
 }
 
 export interface ProvideAsyncApiPayload {
@@ -15,6 +16,7 @@ export interface ProvideAsyncApiPayload {
   asyncapi_yaml: string;
   dry_run?: boolean;
   api_type?: string;
+  base_version?: number;
 }
 
 export interface ProvideProtoPayload {
@@ -23,6 +25,19 @@ export interface ProvideProtoPayload {
   proto_content: string;
   dry_run?: boolean;
   api_type?: string;
+  base_version?: number;
+}
+
+export interface ProvideResponseBody {
+  version: number;
+  content_hash: string;
+  changes: { inserts: number; updates: number; deletes: number };
+}
+
+export interface RequireResult {
+  content: string | null;
+  etag: string | null;
+  notModified: boolean;
 }
 
 export interface RequireBundleEndpoint {
@@ -96,19 +111,19 @@ export class SanshainClient {
     );
   }
 
-  async provide(payload: ProvidePayload, compression: boolean = false): Promise<void> {
-    await this.post('/provide', { ...payload, api_type: 'openapi' }, compression);
+  async provide(payload: ProvidePayload, compression: boolean = false): Promise<ProvideResponseBody | null> {
+    return this.postProvide('/provide', { ...payload, api_type: 'openapi' }, compression);
   }
 
-  async provideAsyncApi(payload: ProvideAsyncApiPayload, compression: boolean = false): Promise<void> {
-    await this.post('/provide/asyncapi', { ...payload, api_type: 'asyncapi' }, compression);
+  async provideAsyncApi(payload: ProvideAsyncApiPayload, compression: boolean = false): Promise<ProvideResponseBody | null> {
+    return this.postProvide('/provide/asyncapi', { ...payload, api_type: 'asyncapi' }, compression);
   }
 
-  async provideProto(payload: ProvideProtoPayload, compression: boolean = false): Promise<void> {
-    await this.post('/provide/grpc', { ...payload, api_type: 'proto' }, compression);
+  async provideProto(payload: ProvideProtoPayload, compression: boolean = false): Promise<ProvideResponseBody | null> {
+    return this.postProvide('/provide/grpc', { ...payload, api_type: 'proto' }, compression);
   }
 
-  private async post(url: string, payload: any, compression: boolean = false): Promise<void> {
+  private async postProvide(url: string, payload: any, compression: boolean = false): Promise<ProvideResponseBody | null> {
     let data: any = payload;
     const headers: Record<string, string> = {
       'Content-Type': 'application/json'
@@ -120,7 +135,22 @@ export class SanshainClient {
       headers['Content-Encoding'] = 'gzip';
     }
 
-    await this.axiosInstance.post(url, data, { headers });
+    const response = await this.axiosInstance.post(url, data, { headers });
+    if (response.status === 409) {
+      throw new Error('Concurrent modification detected. Server version has advanced beyond your base_version. Re-run to fetch the latest state.');
+    }
+    try {
+      let body = response.data;
+      if (body instanceof Buffer || body instanceof Uint8Array) {
+        body = Buffer.from(body).toString('utf8');
+      }
+      if (typeof body === 'string') {
+        return JSON.parse(body) as ProvideResponseBody;
+      }
+      return body as ProvideResponseBody;
+    } catch {
+      return null;
+    }
   }
 
   async require(
@@ -131,8 +161,9 @@ export class SanshainClient {
     method: string,
     timeout?: number,
     dry_run?: boolean,
-    api_type?: string
-  ): Promise<string> {
+    api_type?: string,
+    etag?: string
+  ): Promise<RequireResult> {
     let url = '/require';
     if (api_type === 'asyncapi') {
       url = '/require/asyncapi';
@@ -151,22 +182,36 @@ export class SanshainClient {
       api_type: api_type || 'openapi'
     };
 
+    const headers: Record<string, string> = {};
+    if (etag) {
+      headers['If-None-Match'] = etag;
+    }
+
     const response: AxiosResponse = await this.axiosInstance.get(url, {
       params,
-      responseType: 'arraybuffer'
+      headers,
+      responseType: 'arraybuffer',
+      validateStatus: (status) => status === 200 || status === 304
     });
+
+    if (response.status === 304) {
+      return { content: null, etag: null, notModified: true };
+    }
 
     let body = response.data;
     if (response.headers?.['content-encoding'] === 'gzip') {
       body = await decompress(Buffer.from(body));
     }
-    return Buffer.from(body).toString('utf8');
+    const content = Buffer.from(body).toString('utf8');
+    const responseEtag = response.headers?.['etag'] || null;
+    return { content, etag: responseEtag, notModified: false };
   }
 
   async requireBundle(
     payload: RequireBundlePayload,
-    compression: boolean = false
-  ): Promise<string> {
+    compression: boolean = false,
+    etag?: string
+  ): Promise<RequireResult> {
     const dataWithFallback = {
       ...payload,
       api_type: payload.api_type || 'openapi'
@@ -176,6 +221,10 @@ export class SanshainClient {
       'Content-Type': 'application/json'
     };
 
+    if (etag) {
+      headers['If-None-Match'] = etag;
+    }
+
     if (compression) {
       const json = JSON.stringify(dataWithFallback);
       data = await compress(json);
@@ -184,13 +233,20 @@ export class SanshainClient {
 
     const response: AxiosResponse = await this.axiosInstance.post('/require-bundle', data, {
       headers,
-      responseType: 'arraybuffer'
+      responseType: 'arraybuffer',
+      validateStatus: (status) => status === 200 || status === 304
     });
+
+    if (response.status === 304) {
+      return { content: null, etag: null, notModified: true };
+    }
 
     let body = response.data;
     if (response.headers?.['content-encoding'] === 'gzip') {
       body = await decompress(Buffer.from(body));
     }
-    return Buffer.from(body).toString('utf8');
+    const content = Buffer.from(body).toString('utf8');
+    const responseEtag = response.headers?.['etag'] || null;
+    return { content, etag: responseEtag, notModified: false };
   }
 }

@@ -20,6 +20,7 @@ export interface ProvideConfig {
   file?: string;
   apiType?: string;
   branch?: string;
+  baseVersion?: number;
   // Backward compatibility
   openApiFile?: string;
   asyncApiFile?: string;
