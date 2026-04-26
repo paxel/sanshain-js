@@ -16,10 +16,25 @@
     "build": "tsc",
     "test": "jest"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "",
+  "description": "TypeScript/Node.js client and CLI for Sanshain Service",
+  "author": "Axel <axel@sanshain.io>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/paxel/sanshain-js.git"
+  },
+  "bugs": {
+    "url": "https://github.com/paxel/sanshain-js/issues"
+  },
+  "homepage": "https://github.com/paxel/sanshain-js#readme",
+  "keywords": [
+    "openapi",
+    "typescript",
+    "cli",
+    "api-management",
+    "sanshain"
+  ],
+  "license": "Apache-2.0",
+  "types": "dist/index.d.ts",
   "dependencies": {
     "axios": "^1.15.1",
     "commander": "^14.0.3",

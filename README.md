@@ -193,4 +193,4 @@ When strict mode is enabled:
 
 ## License
 
-This project is licensed under the GNU Affero General Public License (AGPL-3.0). See the [LICENSE](LICENSE) file for details.
+This project is licensed under the Apache License 2.0. See the [LICENSE](LICENSE) file for details.
