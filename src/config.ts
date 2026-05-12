@@ -35,6 +35,7 @@ export interface SanshainConfig {
   timeout?: number;
   compression?: boolean;
   bestEffort?: boolean;
+  force?: boolean;
   strict?: boolean;
   provide?: ProvideConfig;
   provides?: ProvideConfig[];
@@ -74,6 +75,10 @@ function applyEnvOverrides(config: SanshainConfig): void {
   }
   if (process.env.SANSHAIN_BEST_EFFORT) {
     config.bestEffort = process.env.SANSHAIN_BEST_EFFORT === 'true';
+  }
+  if (process.env.SANSHAIN_FORCE) {
+    // We don't have force in SanshainConfig interface yet, adding it for internal use or we can update interface
+    (config as any).force = process.env.SANSHAIN_FORCE === 'true';
   }
   if (process.env.SANSHAIN_STRICT) {
     config.strict = process.env.SANSHAIN_STRICT === 'true';

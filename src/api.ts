@@ -6,6 +6,7 @@ export interface ProvidePayload {
   branch: string;
   openapi_yaml: string;
   dry_run?: boolean;
+  force?: boolean;
   api_type?: string;
   base_version?: number;
 }
@@ -15,6 +16,7 @@ export interface ProvideAsyncApiPayload {
   branch: string;
   asyncapi_yaml: string;
   dry_run?: boolean;
+  force?: boolean;
   api_type?: string;
   base_version?: number;
 }
@@ -24,6 +26,7 @@ export interface ProvideProtoPayload {
   branch: string;
   proto_content: string;
   dry_run?: boolean;
+  force?: boolean;
   api_type?: string;
   base_version?: number;
 }

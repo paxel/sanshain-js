@@ -16,16 +16,34 @@ program
   .option('-u, --url <url>', 'Sanshain service URL')
   .option('-t, --token <token>', 'authentication token')
   .option('-b, --branch <branch>', 'git branch name')
-  .option('--insecure', 'allow insecure SSL connections', false);
+  .option('--insecure', 'allow insecure SSL connections', false)
+  .option('--force', 'force upload (reset shared contract source)', false)
+  .option('--best-effort', 'continue on errors', false);
 
 program
   .command('provide')
   .description('Upload local OpenAPI spec to Sanshain')
   .option('--dry-run', 'validate spec without storing', false)
     .action(async (options) => {
+    let config: any = { bestEffort: false };
     try {
       const globalOptions = program.opts();
-      const config = loadConfig(globalOptions.config);
+      try {
+        config = loadConfig(globalOptions.config);
+      } catch (e) {
+        const bestEffort = globalOptions.bestEffort || process.env.SANSHAIN_BEST_EFFORT === 'true';
+        if (bestEffort) {
+          console.warn(`Warning loading config: ${(e as Error).message}`);
+          config = { bestEffort: true, sanshainUrl: 'http://localhost:8080' };
+        } else {
+          throw e;
+        }
+      }
+
+      if (globalOptions.bestEffort) config.bestEffort = true;
+      if (process.env.SANSHAIN_BEST_EFFORT === 'true') config.bestEffort = true;
+
+      const force = globalOptions.force || config.force || process.env.SANSHAIN_FORCE === 'true' || false;
       const bestEffort = config.bestEffort || false;
       
       const url = globalOptions.url || config.sanshainUrl;
@@ -68,21 +86,21 @@ program
           const effectiveApiType = apiType || 'openapi';
           const fileKey = path.basename(filePath);
 
-          // Feature 3: Client-side content caching — skip if unchanged
+          // Feature 3: Client-side content caching — skip if unchanged (unless force)
           const contentHash = SanshainCache.computeHash(content);
           const cachedEntry = cache.getProvideEntry(fileKey);
-          if (cachedEntry && contentHash === cachedEntry.content_hash) {
+          if (!force && cachedEntry && contentHash === cachedEntry.content_hash) {
             console.log('\u23ed Spec unchanged (hash match), skipping provide.');
             return;
           }
 
           // Feature 1: Use cached version as base_version if not explicitly set
           let effectiveBaseVersion = baseVersion;
-          if (effectiveBaseVersion === undefined && cachedEntry && cachedEntry.version > 0) {
+          if (!force && effectiveBaseVersion === undefined && cachedEntry && cachedEntry.version > 0) {
             effectiveBaseVersion = cachedEntry.version;
           }
 
-          console.log(`Providing ${effectiveApiType} ${config.serviceName} (branch: ${branch}) to ${url}...`);
+          console.log(`Providing ${effectiveApiType} ${config.serviceName} (branch: ${branch}, force: ${force}) to ${url}...`);
           
           let response: ProvideResponseBody | null = null;
           if (effectiveApiType === 'openapi') {
@@ -91,6 +109,7 @@ program
               branch,
               openapi_yaml: content,
               dry_run: options.dryRun,
+              force,
               base_version: effectiveBaseVersion
             }, config.compression);
           } else if (effectiveApiType === 'asyncapi') {
@@ -99,6 +118,7 @@ program
               branch,
               asyncapi_yaml: content,
               dry_run: options.dryRun,
+              force,
               base_version: effectiveBaseVersion
             }, config.compression);
           } else if (effectiveApiType === 'proto' || effectiveApiType === 'grpc') {
@@ -107,6 +127,7 @@ program
               branch,
               proto_content: content,
               dry_run: options.dryRun,
+              force,
               base_version: effectiveBaseVersion
             }, config.compression);
           }
@@ -167,9 +188,24 @@ program
   .description('Download required OpenAPI specs from Sanshain')
   .option('--dry-run', 'validate dependencies without recording', false)
   .action(async (options) => {
+    let config: any = { bestEffort: false };
     try {
       const globalOptions = program.opts();
-      const config = loadConfig(globalOptions.config);
+      try {
+        config = loadConfig(globalOptions.config);
+      } catch (e) {
+        const bestEffort = globalOptions.bestEffort || process.env.SANSHAIN_BEST_EFFORT === 'true';
+        if (bestEffort) {
+          console.warn(`Warning loading config: ${(e as Error).message}`);
+          config = { bestEffort: true, sanshainUrl: 'http://localhost:8080' };
+        } else {
+          throw e;
+        }
+      }
+
+      if (globalOptions.bestEffort) config.bestEffort = true;
+      if (process.env.SANSHAIN_BEST_EFFORT === 'true') config.bestEffort = true;
+
       const bestEffort = config.bestEffort || false;
       
       const url = globalOptions.url || config.sanshainUrl;
