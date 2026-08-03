@@ -1,8 +1,7 @@
 import { Command } from 'commander';
-import { loadConfig } from './config';
-import { SanshainClient, ProvideResponseBody } from './api';
+import { loadConfig, resolveStability } from './config';
+import { SanshainClient, ProvideResponseBody, VersionConflictError } from './api';
 import { SanshainCache } from './cache';
-import { getCurrentBranch } from './git';
 import fs from 'fs';
 import path from 'path';
 
@@ -11,18 +10,18 @@ export const program = new Command();
 program
   .name('sanshain')
   .description('Sanshain CLI client for managing OpenAPI specs')
-  .version('2.2.0')
+  .version('3.0.0')
   .option('-c, --config <path>', 'path to sanshain.yaml', 'sanshain.yaml')
   .option('-u, --url <url>', 'Sanshain service URL')
   .option('-t, --token <token>', 'authentication token')
-  .option('-b, --branch <branch>', 'git branch name')
+  .option('--ga', 'provide as immutable GA instead of the default snapshot (also: SANSHAIN_GA=true)', false)
   .option('--insecure', 'allow insecure SSL connections', false)
-  .option('--force', 'force upload (reset shared contract source)', false)
+  .option('--force', 're-provide even if the spec file is unchanged (skip the local hash cache)', false)
   .option('--best-effort', 'continue on errors', false);
 
 program
   .command('provide')
-  .description('Upload local OpenAPI spec to Sanshain')
+  .description('Upload local API spec(s) to Sanshain under the version declared in the spec file')
   .option('--dry-run', 'validate spec without storing', false)
     .action(async (options) => {
     let config: any = { bestEffort: false };
@@ -45,11 +44,11 @@ program
 
       const force = globalOptions.force || config.force || process.env.SANSHAIN_FORCE === 'true' || false;
       const bestEffort = config.bestEffort || false;
-      
+
       const url = globalOptions.url || config.sanshainUrl;
       const token = globalOptions.token || process.env.SANSHAIN_TOKEN;
-      const defaultBranch = globalOptions.branch || await getCurrentBranch() || 'main';
       const insecure = globalOptions.insecure || false;
+      const stability = resolveStability(globalOptions.ga);
 
       const strict = config.strict || false;
 
@@ -79,63 +78,65 @@ program
       const cache = new SanshainCache();
       let provided = false;
 
-      const provideFile = async (p: any, branch: string, filePath: string, apiType?: string, baseVersion?: number) => {
+      const provideFile = async (filePath: string, apiType?: string) => {
         const specPath = path.resolve(process.cwd(), filePath);
         if (fs.existsSync(specPath)) {
           const content = fs.readFileSync(specPath, 'utf8');
           const effectiveApiType = apiType || 'openapi';
           const fileKey = path.basename(filePath);
 
-          // Feature 3: Client-side content caching — skip if unchanged (unless force)
+          // Client-side content caching — skip if unchanged (unless force)
           const contentHash = SanshainCache.computeHash(content);
           const cachedEntry = cache.getProvideEntry(fileKey);
           if (!force && cachedEntry && contentHash === cachedEntry.content_hash) {
-            console.log('\u23ed Spec unchanged (hash match), skipping provide.');
+            console.log('⏭ Spec unchanged (hash match), skipping provide.');
             return;
           }
 
-          // Feature 1: Use cached version as base_version if not explicitly set
-          let effectiveBaseVersion = baseVersion;
-          if (!force && effectiveBaseVersion === undefined && cachedEntry && cachedEntry.version > 0) {
-            effectiveBaseVersion = cachedEntry.version;
-          }
+          console.log(`Providing ${effectiveApiType} ${config.serviceName} (stability: ${stability}) to ${url}...`);
 
-          console.log(`Providing ${effectiveApiType} ${config.serviceName} (branch: ${branch}, force: ${force}) to ${url}...`);
-          
           let response: ProvideResponseBody | null = null;
-          if (effectiveApiType === 'openapi') {
-            response = await client.provide({
-              servicename: config.serviceName,
-              branch,
-              openapi_yaml: content,
-              dry_run: options.dryRun,
-              force,
-              base_version: effectiveBaseVersion
-            }, config.compression);
-          } else if (effectiveApiType === 'asyncapi') {
-            response = await client.provideAsyncApi({
-              servicename: config.serviceName,
-              branch,
-              asyncapi_yaml: content,
-              dry_run: options.dryRun,
-              force,
-              base_version: effectiveBaseVersion
-            }, config.compression);
-          } else if (effectiveApiType === 'proto' || effectiveApiType === 'grpc') {
-            response = await client.provideProto({
-              servicename: config.serviceName,
-              branch,
-              proto_content: content,
-              dry_run: options.dryRun,
-              force,
-              base_version: effectiveBaseVersion
-            }, config.compression);
+          try {
+            if (effectiveApiType === 'openapi') {
+              response = await client.provide({
+                producername: config.serviceName,
+                openapi_yaml: content,
+                stability,
+                dry_run: options.dryRun
+              }, config.compression);
+            } else if (effectiveApiType === 'asyncapi') {
+              response = await client.provideAsyncApi({
+                producername: config.serviceName,
+                asyncapi_yaml: content,
+                stability,
+                dry_run: options.dryRun
+              }, config.compression);
+            } else if (effectiveApiType === 'proto' || effectiveApiType === 'grpc') {
+              response = await client.provideProto({
+                producername: config.serviceName,
+                proto_content: content,
+                stability,
+                dry_run: options.dryRun
+              }, config.compression);
+            }
+          } catch (error: any) {
+            if (error instanceof VersionConflictError) {
+              const versionSlot = effectiveApiType === 'proto' || effectiveApiType === 'grpc'
+                ? "the '// sanshain-version:' comment"
+                : 'info.version';
+              let message = `Provide rejected by the version rules (409): ${error.message}`;
+              if (error.proposedVersion) {
+                message += `\nPublish as ${error.proposedVersion} — update ${versionSlot} in ${filePath}`;
+              }
+              throw new Error(message);
+            }
+            throw error;
           }
 
-          // Feature 2: Log summary and save state
+          // Log summary and save state
           if (response) {
             const c = response.changes || { inserts: 0, updates: 0, deletes: 0 };
-            console.log(`\u2713 Provided to Sanshain v${response.version}: ${c.inserts} new, ${c.updates} updated, ${c.deletes} deleted endpoints`);
+            console.log(`✓ Provided ${config.serviceName} ${response.version} (${response.stability}): ${c.inserts} new, ${c.updates} updated, ${c.deletes} deleted endpoints`);
             const responseHash = response.content_hash || contentHash;
             cache.updateProvideEntry(fileKey, responseHash, response.version);
             cache.save();
@@ -149,14 +150,13 @@ program
       };
 
       for (const p of provides) {
-        const branch = p.branch || defaultBranch;
         if (p.file) {
-          await provideFile(p, branch, p.file, p.apiType, p.baseVersion);
+          await provideFile(p.file, p.apiType);
         }
         // Backward compatibility
-        if (p.openApiFile) await provideFile(p, branch, p.openApiFile, 'openapi', p.baseVersion);
-        if (p.asyncApiFile) await provideFile(p, branch, p.asyncApiFile, 'asyncapi', p.baseVersion);
-        if (p.protoFile) await provideFile(p, branch, p.protoFile, 'proto', p.baseVersion);
+        if (p.openApiFile) await provideFile(p.openApiFile, 'openapi');
+        if (p.asyncApiFile) await provideFile(p.asyncApiFile, 'asyncapi');
+        if (p.protoFile) await provideFile(p.protoFile, 'proto');
       }
 
       if (!provided) {
@@ -169,12 +169,7 @@ program
         console.log('Successfully provided spec(s).');
       }
     } catch (error: any) {
-      if (error.message && error.message.includes('Concurrent modification detected')) {
-        console.error(error.message);
-      } else {
-        console.error(`Error providing spec: ${error.message}`);
-      }
-      const config = loadConfig(program.opts().config);
+      console.error(`Error providing spec: ${error.message}`);
       if (!(config.bestEffort || false)) {
         process.exit(1);
       } else {
@@ -185,7 +180,7 @@ program
 
 program
   .command('require')
-  .description('Download required OpenAPI specs from Sanshain')
+  .description('Download the pinned endpoint snippets from Sanshain')
   .option('--dry-run', 'validate dependencies without recording', false)
   .action(async (options) => {
     let config: any = { bestEffort: false };
@@ -207,10 +202,9 @@ program
       if (process.env.SANSHAIN_BEST_EFFORT === 'true') config.bestEffort = true;
 
       const bestEffort = config.bestEffort || false;
-      
+
       const url = globalOptions.url || config.sanshainUrl;
       const token = globalOptions.token || process.env.SANSHAIN_TOKEN;
-      const branch = globalOptions.branch || await getCurrentBranch() || 'main';
       const insecure = globalOptions.insecure || false;
 
       const strict = config.strict || false;
@@ -237,15 +231,13 @@ program
       const cache = new SanshainCache();
 
       for (const req of config.requires) {
-        const reqBranch = req.branch || branch;
-        const reqTimeout = req.timeout || config.timeout || 30;
         const outputDir = path.resolve(process.cwd(), req.outputDirectory);
 
         if (!fs.existsSync(outputDir)) {
           fs.mkdirSync(outputDir, { recursive: true });
         }
 
-        console.log(`Requiring ${req.serviceName} (branch: ${reqBranch}) from ${url}...`);
+        console.log(`Requiring ${req.serviceName} ${req.version} from ${url}...`);
 
         try {
           let fileName: string;
@@ -254,24 +246,23 @@ program
           if (req.endpoints.length === 1) {
             // Single endpoint require
             const endpoint = req.endpoints[0];
-            const cacheKey = SanshainCache.requireKey(req.serviceName, reqBranch, endpoint.method, endpoint.path);
+            const cacheKey = SanshainCache.requireKey(req.serviceName, req.version, endpoint.method, endpoint.path);
             const cachedEntry = cache.getRequireEntry(cacheKey);
             const cachedEtag = cachedEntry?.etag;
 
             const result = await client.require(
               config.serviceName,
               req.serviceName,
-              reqBranch,
+              req.version,
               endpoint.path,
               endpoint.method,
-              reqTimeout,
               options.dryRun,
               req.apiType,
               cachedEtag
             );
 
             if (result.notModified) {
-              console.log(`\u23ed ${req.serviceName} spec unchanged (304), skipping code generation.`);
+              console.log(`⏭ ${req.serviceName} spec unchanged (304), skipping code generation.`);
               continue;
             }
 
@@ -285,22 +276,21 @@ program
             }
           } else {
             // Bundle require
-            const cacheKey = SanshainCache.requireBundleKey(req.serviceName, reqBranch);
+            const cacheKey = SanshainCache.requireBundleKey(req.serviceName, req.version);
             const cachedEntry = cache.getRequireEntry(cacheKey);
             const cachedEtag = cachedEntry?.etag;
 
             const result = await client.requireBundle({
-              clientname: config.serviceName,
-              servicename: req.serviceName,
-              branch: reqBranch,
+              consumername: config.serviceName,
+              producername: req.serviceName,
+              version: req.version,
               endpoints: req.endpoints,
-              timeout: reqTimeout,
               dry_run: options.dryRun,
               api_type: req.apiType
             }, config.compression, cachedEtag);
 
             if (result.notModified) {
-              console.log(`\u23ed ${req.serviceName} spec unchanged (304), skipping code generation.`);
+              console.log(`⏭ ${req.serviceName} spec unchanged (304), skipping code generation.`);
               continue;
             }
 
@@ -314,7 +304,7 @@ program
             }
           }
         } catch (error: any) {
-          console.error(`Error requiring ${req.serviceName}: ${error.message}`);
+          console.error(`Error requiring ${req.serviceName} ${req.version}: ${error.message}`);
           if (!bestEffort) {
             process.exit(1);
           } else {
@@ -324,7 +314,6 @@ program
       }
     } catch (error: any) {
       console.error(`Error during require: ${error.message}`);
-      const config = loadConfig(program.opts().config);
       if (!(config.bestEffort || false)) {
         process.exit(1);
       } else {

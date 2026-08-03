@@ -8,11 +8,26 @@ While `SanshainJS` works on any CI platform using standard CLI commands, this gu
 
 If you want a declarative workflow or want to avoid installing the CLI as a dependency, you can use the native Sanshain Action.
 
-### Publish OpenAPI Spec on Merge
+### Publish Spec on Merge (GA)
+
+On your protected-branch workflow, set the `ga` input so the publish is an immutable GA version:
 
 ```yaml
 - name: Provide Spec
-  uses: paxel/sanshain/sanshain-js@v1 # Path to the action in this repo
+  uses: paxel/sanshain/sanshain-js@v3 # Path to the action in this repo
+  with:
+    command: provide
+    token: ${{ secrets.SANSHAIN_TOKEN }}
+    ga: 'true'
+```
+
+### Publish Snapshot on Feature Branches
+
+Omit `ga` (or set it to `'false'`) — the default is always a snapshot:
+
+```yaml
+- name: Provide Snapshot
+  uses: paxel/sanshain/sanshain-js@v3
   with:
     command: provide
     token: ${{ secrets.SANSHAIN_TOKEN }}
@@ -22,27 +37,39 @@ If you want a declarative workflow or want to avoid installing the CLI as a depe
 
 ```yaml
 - name: Require Specs
-  uses: paxel/sanshain/sanshain-js@v1
+  uses: paxel/sanshain/sanshain-js@v3
   with:
     command: require
     token: ${{ secrets.SANSHAIN_TOKEN }}
 ```
 
+### Inputs
+
+| Input               | Required | Default   | Description                                                        |
+|---------------------|----------|-----------|--------------------------------------------------------------------|
+| `command`           | yes      | —         | `provide` or `require`.                                            |
+| `token`             | no       | —         | Sanshain API token (or set the `SANSHAIN_TOKEN` env/secret).       |
+| `ga`                | no       | `'false'` | `'true'` publishes as immutable GA (maps to `SANSHAIN_GA`).        |
+| `working-directory` | no       | `'.'`     | Directory where `sanshain.yaml` is located.                        |
+
 ---
 
 ## Comparison with Maven Plugin
 
-| Feature | Maven Plugin (Java) | SanshainJS (TypeScript) |
-|---|---|---|
-| **Config File** | `sanshain.yaml` | `sanshain.yaml` |
-| **Lifecycle** | Attached to `initialize` phase | Attached to `prebuild` script |
-| **Command** | `mvn sanshain:provide` | `sanshain provide` |
-| **Auth** | `settings.xml` or `SANSHAIN_TOKEN` | `SANSHAIN_TOKEN` env var |
-| **Branch** | Auto-detected from Git | Auto-detected from Git / GitHub Actions |
+| Feature         | Maven Plugin (Java)               | SanshainJS (TypeScript)          |
+|-----------------|-----------------------------------|----------------------------------|
+| **Config File** | `sanshain.yaml`                   | `sanshain.yaml`                  |
+| **Lifecycle**   | Attached to `initialize` phase    | Attached to `prebuild` script    |
+| **Command**     | `mvn sanshain:provide`            | `sanshain provide`               |
+| **Auth**        | `settings.xml` or `SANSHAIN_TOKEN`| `SANSHAIN_TOKEN` env var         |
+| **GA switch**   | `-Dsanshain.ga=true` or `SANSHAIN_GA` | `--ga` flag or `SANSHAIN_GA` |
 
-## CI Branch Detection
+## Versions, not Branches
 
-The CLI automatically detects the current branch using the `GITHUB_REF_NAME` environment variable provided by GitHub Actions. This ensures that when you run `require` on a feature branch, it will first look for endpoints on that same branch in Sanshain, falling back to `main` if not found.
+Sanshain 2.x has no branch model, so there is no branch detection in this client. What matters in a workflow:
+
+- **Provide**: the published version is read from the spec file (`info.version`, or the `// sanshain-version:` comment for proto). The workflow only decides *stability* via the `ga` input.
+- **Require**: each `requires` entry in `sanshain.yaml` pins an exact version; the same versions resolve on every branch and every runner.
 
 ## How Files are Handled in CI
 

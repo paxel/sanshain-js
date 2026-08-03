@@ -8,6 +8,10 @@ inputs:
   token:
     description: 'Sanshain API token (optional if set via SANSHAIN_TOKEN secret)'
     required: false
+  ga:
+    description: 'Set to "true" to provide as immutable GA instead of the default snapshot (maps to SANSHAIN_GA). Typically set on protected-branch pipelines.'
+    required: false
+    default: 'false'
   working-directory:
     description: 'Directory where sanshain.yaml is located'
     required: false
@@ -21,5 +25,6 @@ runs:
       working-directory: ${{ inputs.working-directory }}
       env:
         SANSHAIN_TOKEN: ${{ inputs.token || env.SANSHAIN_TOKEN }}
+        SANSHAIN_GA: ${{ inputs.ga }}
       run: |
         npx sanshainjs ${{ inputs.command }}

@@ -1,38 +1,32 @@
 import axios, { AxiosInstance, AxiosResponse } from 'axios';
 import { compress, decompress, sanitize } from './utils';
 
+export type Stability = 'snapshot' | 'ga';
+
 export interface ProvidePayload {
-  servicename: string;
-  branch: string;
+  producername: string;
   openapi_yaml: string;
+  stability: Stability;
   dry_run?: boolean;
-  force?: boolean;
-  api_type?: string;
-  base_version?: number;
 }
 
 export interface ProvideAsyncApiPayload {
-  servicename: string;
-  branch: string;
+  producername: string;
   asyncapi_yaml: string;
+  stability: Stability;
   dry_run?: boolean;
-  force?: boolean;
-  api_type?: string;
-  base_version?: number;
 }
 
 export interface ProvideProtoPayload {
-  servicename: string;
-  branch: string;
+  producername: string;
   proto_content: string;
+  stability: Stability;
   dry_run?: boolean;
-  force?: boolean;
-  api_type?: string;
-  base_version?: number;
 }
 
 export interface ProvideResponseBody {
-  version: number;
+  version: string;
+  stability: Stability;
   content_hash: string;
   changes: { inserts: number; updates: number; deletes: number };
 }
@@ -49,21 +43,59 @@ export interface RequireBundleEndpoint {
 }
 
 export interface RequireBundlePayload {
-  clientname: string;
-  servicename: string;
-  branch: string;
+  consumername: string;
+  producername: string;
+  version: string;
   endpoints: RequireBundleEndpoint[];
-  timeout?: number;
-  dry_run?: boolean;
   api_type?: string;
+  dry_run?: boolean;
+}
+
+/**
+ * 409 — the Provide was rejected by the version rules. The server proposes
+ * the next free version to publish as instead.
+ */
+export class VersionConflictError extends Error {
+  proposedVersion?: string;
+
+  constructor(message: string, proposedVersion?: string) {
+    super(message);
+    this.name = 'VersionConflictError';
+    this.proposedVersion = proposedVersion;
+  }
+}
+
+/** 404 — the Producer, or the pinned version, does not exist on the server. */
+export class UnknownVersionError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'UnknownVersionError';
+  }
+}
+
+/** 410 — the pinned version exists but deliberately lacks the endpoint(s). */
+export class AbsentEndpointError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'AbsentEndpointError';
+  }
+}
+
+interface ErrorBody {
+  error?: string;
+  proposed_version?: string;
 }
 
 export class SanshainClient {
   private axiosInstance: AxiosInstance;
   private token?: string;
+  private baseUrl: string;
+  private serverVersionChecked = false;
+  private oldServerMessage: string | null = null;
 
   constructor(baseUrl: string, token?: string, insecure: boolean = false) {
     this.token = token;
+    this.baseUrl = baseUrl;
     this.axiosInstance = axios.create({
       baseURL: baseUrl,
       validateStatus: (status) => status >= 200 && status < 300,
@@ -86,44 +118,113 @@ export class SanshainClient {
         rejectUnauthorized: false
       });
     }
+  }
 
-    this.axiosInstance.interceptors.response.use(
-      (response) => response,
-      async (error) => {
-        if (error.response) {
-          let body = error.response.data;
-          if (error.response.headers?.['content-encoding'] === 'gzip' && (body instanceof Buffer || body instanceof Uint8Array)) {
-            try {
-              body = (await decompress(Buffer.from(body))).toString('utf8');
-            } catch (e) {
-              body = body.toString();
-            }
-          } else if (body instanceof Buffer || body instanceof Uint8Array) {
-            body = Buffer.from(body).toString('utf8');
-          } else if (typeof body !== 'string') {
-            try {
-              body = JSON.stringify(body);
-            } catch (e) {
-              body = String(body);
-            }
-          }
-          error.message = `Request failed with status ${error.response.status}: ${sanitize(body)}`;
-        }
-        return Promise.reject(error);
+  private async decodeBody(response: { data: any; headers?: any }): Promise<string> {
+    let body = response.data;
+    if (response.headers?.['content-encoding'] === 'gzip' && (body instanceof Buffer || body instanceof Uint8Array)) {
+      try {
+        body = (await decompress(Buffer.from(body))).toString('utf8');
+      } catch {
+        body = Buffer.from(body).toString('utf8');
       }
-    );
+    } else if (body instanceof Buffer || body instanceof Uint8Array) {
+      body = Buffer.from(body).toString('utf8');
+    } else if (typeof body !== 'string') {
+      try {
+        body = JSON.stringify(body);
+      } catch {
+        body = String(body);
+      }
+    }
+    return body;
+  }
+
+  private parseErrorBody(body: string): ErrorBody {
+    try {
+      const parsed = JSON.parse(body);
+      if (parsed && typeof parsed === 'object') {
+        return parsed as ErrorBody;
+      }
+    } catch {
+      // not JSON
+    }
+    return {};
+  }
+
+  /**
+   * Wrong-server diagnosis: on a failed provide/require, do ONE lazy
+   * GET /version. If the instance reports a version < 2.0.0 the original
+   * (confusing) error is replaced by an upgrade hint. The check runs at most
+   * once per client instance.
+   */
+  private async diagnoseOldServer(): Promise<string | null> {
+    if (this.serverVersionChecked) {
+      return this.oldServerMessage;
+    }
+    this.serverVersionChecked = true;
+    try {
+      const response = await this.axiosInstance.get('/version', {
+        responseType: 'arraybuffer',
+        validateStatus: (status) => status === 200
+      });
+      const body = await this.decodeBody(response);
+      const parsed = JSON.parse(body);
+      const serverVersion: string | undefined = parsed?.version;
+      if (serverVersion) {
+        const major = parseInt(serverVersion.split('.')[0], 10);
+        if (!isNaN(major) && major < 2) {
+          this.oldServerMessage = `Sanshain server at ${this.baseUrl} is ${serverVersion}; this client requires Sanshain 2.x — upgrade the server.`;
+        }
+      }
+    } catch {
+      // /version unreachable or unparseable — keep the original error
+    }
+    return this.oldServerMessage;
+  }
+
+  private async translateError(error: any): Promise<Error> {
+    if (!error.response) {
+      return error;
+    }
+
+    const status: number = error.response.status;
+    const bodyText = await this.decodeBody(error.response);
+    const errorBody = this.parseErrorBody(bodyText);
+
+    const oldServer = await this.diagnoseOldServer();
+    if (oldServer) {
+      return new Error(oldServer);
+    }
+
+    const serverMessage = errorBody.error || sanitize(bodyText);
+
+    if (status === 409) {
+      return new VersionConflictError(serverMessage, errorBody.proposed_version);
+    }
+    if (status === 404) {
+      return new UnknownVersionError(
+        `Unknown producer or version (404): ${serverMessage} — check the pinned version in sanshain.yaml.`
+      );
+    }
+    if (status === 410) {
+      return new AbsentEndpointError(
+        `Absent endpoint (410): ${serverMessage} — the pinned version exists but deliberately does not include the requested endpoint(s).`
+      );
+    }
+    return new Error(`Request failed with status ${status}: ${sanitize(bodyText)}`);
   }
 
   async provide(payload: ProvidePayload, compression: boolean = false): Promise<ProvideResponseBody | null> {
-    return this.postProvide('/provide', { ...payload, api_type: 'openapi' }, compression);
+    return this.postProvide('/provide', payload, compression);
   }
 
   async provideAsyncApi(payload: ProvideAsyncApiPayload, compression: boolean = false): Promise<ProvideResponseBody | null> {
-    return this.postProvide('/provide/asyncapi', { ...payload, api_type: 'asyncapi' }, compression);
+    return this.postProvide('/provide/asyncapi', payload, compression);
   }
 
   async provideProto(payload: ProvideProtoPayload, compression: boolean = false): Promise<ProvideResponseBody | null> {
-    return this.postProvide('/provide/grpc', { ...payload, api_type: 'proto' }, compression);
+    return this.postProvide('/provide/grpc', payload, compression);
   }
 
   private async postProvide(url: string, payload: any, compression: boolean = false): Promise<ProvideResponseBody | null> {
@@ -138,15 +239,14 @@ export class SanshainClient {
       headers['Content-Encoding'] = 'gzip';
     }
 
-    const response = await this.axiosInstance.post(url, data, { headers });
-    if (response.status === 409) {
-      throw new Error('Concurrent modification detected. Server version has advanced beyond your base_version. Re-run to fetch the latest state.');
+    let response: AxiosResponse;
+    try {
+      response = await this.axiosInstance.post(url, data, { headers });
+    } catch (error: any) {
+      throw await this.translateError(error);
     }
     try {
-      let body = response.data;
-      if (body instanceof Buffer || body instanceof Uint8Array) {
-        body = Buffer.from(body).toString('utf8');
-      }
+      const body = await this.decodeBody(response);
       if (typeof body === 'string') {
         return JSON.parse(body) as ProvideResponseBody;
       }
@@ -157,12 +257,11 @@ export class SanshainClient {
   }
 
   async require(
-    clientname: string,
-    servicename: string,
-    branch: string,
+    consumername: string,
+    producername: string,
+    version: string,
     path: string,
     method: string,
-    timeout?: number,
     dry_run?: boolean,
     api_type?: string,
     etag?: string
@@ -175,14 +274,12 @@ export class SanshainClient {
     }
 
     const params = {
-      clientname,
-      servicename,
-      branch,
+      consumername,
+      producername,
+      version,
       path,
       method,
-      timeout,
-      dry_run,
-      api_type: api_type || 'openapi'
+      dry_run
     };
 
     const headers: Record<string, string> = {};
@@ -190,24 +287,19 @@ export class SanshainClient {
       headers['If-None-Match'] = etag;
     }
 
-    const response: AxiosResponse = await this.axiosInstance.get(url, {
-      params,
-      headers,
-      responseType: 'arraybuffer',
-      validateStatus: (status) => status === 200 || status === 304
-    });
-
-    if (response.status === 304) {
-      return { content: null, etag: null, notModified: true };
+    let response: AxiosResponse;
+    try {
+      response = await this.axiosInstance.get(url, {
+        params,
+        headers,
+        responseType: 'arraybuffer',
+        validateStatus: (status) => status === 200 || status === 304
+      });
+    } catch (error: any) {
+      throw await this.translateError(error);
     }
 
-    let body = response.data;
-    if (response.headers?.['content-encoding'] === 'gzip') {
-      body = await decompress(Buffer.from(body));
-    }
-    const content = Buffer.from(body).toString('utf8');
-    const responseEtag = response.headers?.['etag'] || null;
-    return { content, etag: responseEtag, notModified: false };
+    return this.toRequireResult(response);
   }
 
   async requireBundle(
@@ -234,12 +326,21 @@ export class SanshainClient {
       headers['Content-Encoding'] = 'gzip';
     }
 
-    const response: AxiosResponse = await this.axiosInstance.post('/require-bundle', data, {
-      headers,
-      responseType: 'arraybuffer',
-      validateStatus: (status) => status === 200 || status === 304
-    });
+    let response: AxiosResponse;
+    try {
+      response = await this.axiosInstance.post('/require-bundle', data, {
+        headers,
+        responseType: 'arraybuffer',
+        validateStatus: (status) => status === 200 || status === 304
+      });
+    } catch (error: any) {
+      throw await this.translateError(error);
+    }
 
+    return this.toRequireResult(response);
+  }
+
+  private async toRequireResult(response: AxiosResponse): Promise<RequireResult> {
     if (response.status === 304) {
       return { content: null, etag: null, notModified: true };
     }

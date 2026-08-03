@@ -16,7 +16,7 @@ The easiest way to use `SanshainJS` is to integrate it into your `package.json` 
 ```json
 {
   "devDependencies": {
-    "sanshainjs": "^1.0.0"
+    "sanshainjs": "^3.0.0"
   },
   "scripts": {
     "prebuild": "sanshain require",
@@ -64,11 +64,16 @@ If you prefer not to use `package.json` scripts, you can run the CLI directly.
 
 ### Provide (Publish Spec)
 
-Typically run on your main branch after tests pass:
+By default every provide is a **snapshot**. On your release/protected-branch pipeline, flip the GA switch so the publish is an immutable GA version:
+
 ```bash
 # Ensure SANSHAIN_TOKEN is set
-npx sanshain provide
+npx sanshain provide                       # snapshot (default, e.g. feature branches)
+SANSHAIN_GA=true npx sanshain provide      # GA (protected-branch pipeline)
+# or equivalently: npx sanshain provide --ga
 ```
+
+The version itself is never a CI concern — it is read from the spec file (`info.version`, or the `// sanshain-version:` comment for proto).
 
 ### Require (Download Specs)
 
@@ -77,29 +82,28 @@ Typically run before build or code generation:
 npx sanshain require
 ```
 
+Requires resolve the exact versions pinned in `sanshain.yaml` — the result does not depend on which branch CI is building.
+
 ## 4. Environment Variables
 
-| Variable | Description |
-|---|---|
-| `SANSHAIN_TOKEN` | **Required**. Your authentication token for the Sanshain Service. |
-| `SANSHAIN_BRANCH` | Optional. Overrides automatic branch detection. |
-| `SANSHAIN_URL` | Optional. Overrides the `sanshainUrl` in `sanshain.yaml`. |
+| Variable         | Description                                                                    |
+|------------------|--------------------------------------------------------------------------------|
+| `SANSHAIN_TOKEN` | **Required**. Your authentication token for the Sanshain Service.              |
+| `SANSHAIN_GA`    | Optional. Set to `true` to provide as immutable GA instead of the default snapshot. |
+| `SANSHAIN_URL`   | Optional. Overrides the `sanshainUrl` in `sanshain.yaml`.                      |
 
-## 5. Branch Detection
+## 5. Snapshot vs. GA in CI
 
-The CLI automatically detects the current branch using common CI environment variables:
-- `GITHUB_REF_NAME` (GitHub)
-- `CI_COMMIT_REF_NAME` (GitLab)
-- `GIT_BRANCH` (Jenkins/Bitbucket)
+Stability is an explicit switch — there is no git or branch detection. The recommended setup:
 
-If your CI uses a different variable, you can map it manually:
-```bash
-env SANSHAIN_BRANCH=$MY_CUSTOM_CI_BRANCH npx sanshain require
-```
+- **Feature-branch / PR pipelines**: run `sanshain provide` as-is; publishes overwritable snapshots.
+- **Protected-branch (release) pipelines**: set `SANSHAIN_GA=true`; publishes immutable GA versions.
+
+If a GA provide is rejected with `409`, the server proposes the next free version; update the spec file's version and re-run.
 
 ## 6. How it Works in CI
 
 1. **Isolation**: Every CI run starts with a clean workspace.
-2. **Download**: `sanshain require` downloads the specs to the local disk (as configured in `sanshain.yaml`).
+2. **Download**: `sanshain require` downloads the pinned specs to the local disk (as configured in `sanshain.yaml`).
 3. **Consumption**: Subsequent build steps (like `tsc` or `openapi-typescript`) use these local files.
 4. **Cleanup**: Downloaded files are usually ignored by Git and vanish when the CI runner finishes, keeping your repo clean.

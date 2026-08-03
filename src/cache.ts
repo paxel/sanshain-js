@@ -4,7 +4,7 @@ import crypto from 'crypto';
 
 export interface ProvideEntry {
   content_hash: string;
-  version: number;
+  version: string;
   last_provided: string;
 }
 
@@ -55,7 +55,7 @@ export class SanshainCache {
     return this.state.provides[key];
   }
 
-  updateProvideEntry(key: string, contentHash: string, version: number): void {
+  updateProvideEntry(key: string, contentHash: string, version: string): void {
     this.state.provides[key] = {
       content_hash: contentHash,
       version,
@@ -79,11 +79,11 @@ export class SanshainCache {
     return `sha256:${hash}`;
   }
 
-  static requireKey(serviceName: string, branch: string, method: string, apiPath: string): string {
-    return `${serviceName}|${branch}|${method}|${apiPath}`;
+  static requireKey(serviceName: string, version: string, method: string, apiPath: string): string {
+    return `${serviceName}|${version}|${method}|${apiPath}`;
   }
 
-  static requireBundleKey(serviceName: string, branch: string): string {
-    return `${serviceName}|${branch}|bundle`;
+  static requireBundleKey(serviceName: string, version: string): string {
+    return `${serviceName}|${version}|bundle`;
   }
 }
