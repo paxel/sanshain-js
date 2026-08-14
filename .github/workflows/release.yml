@@ -60,5 +60,13 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
       - run: npm ci
       - run: npm run build
-      - name: Publish to npm (trusted publishing)
-        run: npm publish
+      # An npm version is immutable — republishing is a hard error, so a re-run
+      # (or a tag after the manual first publish) must skip what already landed.
+      - name: Publish to npm (trusted publishing, skipping published versions)
+        run: |
+          ver=$(node -p "require('./package.json').version")
+          if npm view "sanshain@${ver}" version >/dev/null 2>&1; then
+            echo "sanshain@${ver} already on npm — skipping"
+          else
+            npm publish
+          fi
