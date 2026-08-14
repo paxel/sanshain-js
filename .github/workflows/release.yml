@@ -1,3 +1,11 @@
+# Release on tag: `git tag v2.3.0 && git push origin v2.3.0` produces the
+# GitHub Release and the npm publish.
+#
+# npm auth is Trusted Publishing (OIDC): no NPM_TOKEN — the `id-token`
+# permission plus a trusted-publisher entry on the npm package pointing at this
+# repository and this workflow file. Requires npm >= 11.5.1 and Node >= 22.14
+# (Node 24 bundles a new enough npm). The first publish of the name happens
+# manually, so the package exists to configure the publisher on.
 name: Release
 
 on:
@@ -6,37 +14,51 @@ on:
       - 'v*'
 
 jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+      # The mistake a hand-cut tag makes: tagging v2.4.0 without bumping the
+      # manifest. npm publishes what package.json says, so the tag would name
+      # a version nobody can install.
+      - name: Tag matches the package version
+        run: |
+          ver=$(node -p "require('./package.json').version")
+          tag=${GITHUB_REF_NAME#v}
+          [ "$ver" = "$tag" ] || { echo "tag v$tag != package version $ver" >&2; exit 1; }
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+
   release:
-    name: Create Release
+    needs: gate
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      id-token: write
-      pull-requests: read
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-          registry-url: 'https://registry.npmjs.org'
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build
-        run: npm run build
-
+      - uses: actions/checkout@v4
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
 
-      # Uncomment if you want to publish to npm
-      # - name: Publish to npm
-      #   run: npm publish
-      #   env:
-      #     NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+  publish-npm:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          registry-url: 'https://registry.npmjs.org'
+      - run: npm ci
+      - run: npm run build
+      - name: Publish to npm (trusted publishing)
+        run: npm publish

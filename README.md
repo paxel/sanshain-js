@@ -1,14 +1,14 @@
-# SanshainJS
+# sanshain (JS/TS client)
 
-TypeScript/Node.js client and CLI for the [Sanshain Service](https://github.com/paxel/sanshain-service).
+TypeScript/Node.js client and CLI for the [Sanshain Service](https://github.com/paxel/sanshain-service), published on npm as **`sanshain`**.
 
 Sanshain (Japanese for "Sunshine") is a specialized REST service designed to manage, split, and distribute API specifications (OpenAPI, AsyncAPI, gRPC/Proto). `SanshainJS` provides a seamless way for TypeScript-based microservices to publish their API contracts and consume only the specific endpoints they need.
 
 ## Compatibility
 
-**Client 3.x speaks Sanshain Service 2.x.** Sanshain 2.0 replaced the branch model with producer-declared versions, and SanshainJS 3.x is a clean break to match: it talks only the 2.0 wire contract.
+**Client 2.x speaks Sanshain Service 2.x.** Sanshain 2.0 replaced the branch model with producer-declared versions, and this client is a clean break to match: it talks only the 2.x wire contract.
 
-- **The version lives in the spec file.** OpenAPI/AsyncAPI: `info.version`. Proto: a mandatory `// sanshain-version: MAJOR.MINOR.PATCH` comment. Strict three-part semver, no `v` prefix, no suffixes.
+- **The version lives in the spec file.** OpenAPI/AsyncAPI: `info.version`. Proto: a mandatory `// sanshain-version:` comment. Accepted spellings are `MAJOR[.MINOR[.PATCH]]`, optionally `v`-prefixed — omitted parts are zero (`v2` becomes `2.0.0`) and the stored form is always the full three-part version. No suffixes.
 - **Consumers pin exact versions.** Every `requires` entry carries a `version`; there is no fallback and nothing waits.
 - **Stability is a switch, not git magic.** Every provide is a `snapshot` unless you explicitly pass `--ga` (or set `SANSHAIN_GA=true`).
 
@@ -41,7 +41,7 @@ This ensures your service only knows about the specific endpoints it actually us
 ## Installation
 
 ```bash
-npm install --save-dev sanshainjs
+npm install --save-dev sanshain
 ```
 
 ## Configuration (`sanshain.yaml`)
@@ -92,7 +92,46 @@ sanshain provide --ga
 SANSHAIN_GA=true sanshain provide
 ```
 
-There is no git or branch detection — CI simply sets `SANSHAIN_GA=true` on protected-branch pipelines, and that is the whole mechanism. GA versions permanently claim their number; re-providing a GA version with different content is rejected (see below).
+There is no git or branch detection — CI simply sets `SANSHAIN_GA=true` on protected-branch pipelines, and that is the whole mechanism. GA versions permanently claim their number; re-providing a GA version with different content is rejected (see below). Publishing GA requires the `releaser` role — without it the server answers `403` and the error names the role and the snapshot fallback.
+
+## Streams: trunk and release branches
+
+Alongside stability, the pipeline declares which dependency graph its calls belong to. Like the
+ga switch this is a property of the invocation and never appears in `sanshain.yaml`:
+
+```bash
+sanshain provide --trunk        # trunk CI: maintains the main graph (also SANSHAIN_TRUNK=true)
+sanshain provide --tag R1       # release/hotfix pipeline: updates that sanshain-branch (also SANSHAIN_TAG)
+```
+
+The same flags apply to `require` — trunk pins feed the main graph. Declaring both fails before
+any request is sent; an unknown tag answers `404` (a releaser must create the branch first).
+
+## Retiring a protocol
+
+Removing a `provides` entry tells Sanshain nothing — it cannot distinguish a dropped protocol
+from a pipeline that stopped running. Keep the entry and mark it:
+
+```yaml
+provides:
+  - apiType: asyncapi
+    retired: true
+```
+
+The next `provide` retires that family: the capability tag is cleared, it leaves the current
+dependency graph, and its AsyncAPI channel contracts are released. Version history and existing
+Consumer pins are untouched. Retiring needs the `releaser` role — which a release pipeline
+already holds — or a maintainer grant on the Producer.
+
+> ⚠️ **AsyncAPI 2.x perspective.** Sanshain reads 2.x `publish`/`subscribe` from the
+> **application's** perspective: `publish` means *this service publishes to the channel*,
+> `subscribe` means *this service consumes it*. The AsyncAPI 2.x specification defines those
+> keywords from the **client's** perspective — exactly inverted. Sanshain deliberately uses the
+> application-perspective reading because it matches the unambiguous 3.x `send`/`receive`
+> mapping. A document authored with the spec-literal reading registers its contracts, and has
+> its subscriptions harvested, exactly backwards. Harvested subscriptions are printed after
+> every AsyncAPI provide; those with drift or no publisher yet are warnings and never fail the
+> build.
 
 ## Automatic Integration (Recommended)
 

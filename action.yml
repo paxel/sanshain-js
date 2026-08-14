@@ -12,6 +12,14 @@ inputs:
     description: 'Set to "true" to provide as immutable GA instead of the default snapshot (maps to SANSHAIN_GA). Typically set on protected-branch pipelines.'
     required: false
     default: 'false'
+  trunk:
+    description: 'Set to "true" on trunk CI: this build maintains the main graph (maps to SANSHAIN_TRUNK).'
+    required: false
+    default: 'false'
+  tag:
+    description: 'A sanshain-branch name for release/hotfix pipelines (maps to SANSHAIN_TAG). Mutually exclusive with trunk.'
+    required: false
+    default: ''
   working-directory:
     description: 'Directory where sanshain.yaml is located'
     required: false
@@ -26,5 +34,7 @@ runs:
       env:
         SANSHAIN_TOKEN: ${{ inputs.token || env.SANSHAIN_TOKEN }}
         SANSHAIN_GA: ${{ inputs.ga }}
+        SANSHAIN_TRUNK: ${{ inputs.trunk }}
+        SANSHAIN_TAG: ${{ inputs.tag }}
       run: |
-        npx sanshainjs ${{ inputs.command }}
+        npx sanshain ${{ inputs.command }}

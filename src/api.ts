@@ -1,13 +1,35 @@
 import axios, { AxiosInstance, AxiosResponse } from 'axios';
-import { compress, decompress, sanitize } from './utils';
+import { compress, decompress, normalizeLineEndings, sanitize } from './utils';
 
 export type Stability = 'snapshot' | 'ga';
+
+/**
+ * Which dependency graph a build's calls belong to: trunk, one sanshain-branch
+ * (tag), or neither. A property of the invocation, never of sanshain.yaml —
+ * the same checkout is built by trunk CI and on a developer's laptop, and the
+ * trunk pin store is last-writer-wins, so inferring the stream would let a
+ * local build overwrite what CI recorded. Mutually exclusive: the server
+ * answers 400 for a call carrying both.
+ */
+export interface Stream {
+  trunk?: boolean;
+  tag?: string;
+}
+
+/** The stream as payload/query fields — absent when undeclared, never false/null. */
+function streamFields(stream?: Stream): { trunk?: boolean; tag?: string } {
+  if (stream?.trunk) return { trunk: true };
+  if (stream?.tag) return { tag: stream.tag };
+  return {};
+}
 
 export interface ProvidePayload {
   producername: string;
   openapi_yaml: string;
   stability: Stability;
   dry_run?: boolean;
+  trunk?: boolean;
+  tag?: string;
 }
 
 export interface ProvideAsyncApiPayload {
@@ -15,6 +37,8 @@ export interface ProvideAsyncApiPayload {
   asyncapi_yaml: string;
   stability: Stability;
   dry_run?: boolean;
+  trunk?: boolean;
+  tag?: string;
 }
 
 export interface ProvideProtoPayload {
@@ -22,6 +46,47 @@ export interface ProvideProtoPayload {
   proto_content: string;
   stability: Stability;
   dry_run?: boolean;
+  trunk?: boolean;
+  tag?: string;
+}
+
+/**
+ * One AsyncAPI subscribe operation harvested from a provide as a version-less
+ * consumer edge, checked against the publishing Producer's GA channel
+ * contract. Expecting a field the contract does not guarantee is drift —
+ * reported here on a snapshot, refused with 409 on a GA provide.
+ */
+export interface HarvestedSubscription {
+  channel: string;
+  message_name: string;
+  /** The Producer owning the channel's PUB contract; absent while none does. */
+  owner?: string;
+  /** Why the expectation is not satisfiable by the current contract. */
+  drift?: string;
+}
+
+/** Drift, or no publisher at all: worth a warning rather than an info line. */
+export function isAdvisory(sub: HarvestedSubscription): boolean {
+  return Boolean(sub.drift) || !sub.owner;
+}
+
+/** The one-line build-log form of a harvested subscription. */
+export function describeSubscription(sub: HarvestedSubscription): string {
+  let line = `${sub.channel} / ${sub.message_name}`;
+  line += sub.owner ? ` <- ${sub.owner}` : ' <- (no publisher yet)';
+  if (sub.drift) line += ` — ${sub.drift}`;
+  return line;
+}
+
+/**
+ * What retiring an API family shed. A retire publishes no version, so it
+ * reports none; every count is zero under dry_run.
+ */
+export interface RetiredProtocol {
+  /** The capability tag removed (messaging/grpc); absent for OpenAPI. */
+  tag_cleared?: string | null;
+  trunk_pins_closed: number;
+  contracts_released: number;
 }
 
 export interface ProvideResponseBody {
@@ -29,6 +94,11 @@ export interface ProvideResponseBody {
   stability: Stability;
   content_hash: string;
   changes: { inserts: number; updates: number; deletes: number };
+  /**
+   * Present only for AsyncAPI provides whose document declared subscribe
+   * operations.
+   */
+  harvested_subscriptions?: HarvestedSubscription[];
 }
 
 export interface RequireResult {
@@ -42,6 +112,12 @@ export interface RequireBundleEndpoint {
   method: string;
 }
 
+/**
+ * The bundle endpoint reads the stream from the BODY — the server's handler
+ * has no query extractor, so query parameters would be silently dropped and a
+ * trunk build would record no trunk pins. The single-endpoint GET /require is
+ * the opposite: its stream rides the query string.
+ */
 export interface RequireBundlePayload {
   consumername: string;
   producername: string;
@@ -49,6 +125,8 @@ export interface RequireBundlePayload {
   endpoints: RequireBundleEndpoint[];
   api_type?: string;
   dry_run?: boolean;
+  trunk?: boolean;
+  tag?: string;
 }
 
 /**
@@ -212,19 +290,63 @@ export class SanshainClient {
         `Absent endpoint (410): ${serverMessage} — the pinned version exists but deliberately does not include the requested endpoint(s).`
       );
     }
+    if (status === 403) {
+      // The remedy is a role grant — nothing the Producer can change in its
+      // own repository — so the message has to name it.
+      return new Error(
+        `Refused (403): ${serverMessage}\n` +
+          "Publishing GA requires the 'releaser' role; retiring requires it too, or a maintainer " +
+          'grant on the Producer. Grant the role to the user or token this build authenticates as ' +
+          '(administrators and root always hold it), or publish as a snapshot by leaving ' +
+          '--ga / SANSHAIN_GA unset.'
+      );
+    }
     return new Error(`Request failed with status ${status}: ${sanitize(bodyText)}`);
   }
 
   async provide(payload: ProvidePayload, compression: boolean = false): Promise<ProvideResponseBody | null> {
-    return this.postProvide('/provide', payload, compression);
+    return this.postProvide('/provide', { ...payload, openapi_yaml: normalizeLineEndings(payload.openapi_yaml) }, compression);
   }
 
   async provideAsyncApi(payload: ProvideAsyncApiPayload, compression: boolean = false): Promise<ProvideResponseBody | null> {
-    return this.postProvide('/provide/asyncapi', payload, compression);
+    return this.postProvide('/provide/asyncapi', { ...payload, asyncapi_yaml: normalizeLineEndings(payload.asyncapi_yaml) }, compression);
   }
 
   async provideProto(payload: ProvideProtoPayload, compression: boolean = false): Promise<ProvideResponseBody | null> {
-    return this.postProvide('/provide/grpc', payload, compression);
+    return this.postProvide('/provide/grpc', { ...payload, proto_content: normalizeLineEndings(payload.proto_content) }, compression);
+  }
+
+  /**
+   * Declare that the Producer no longer provides an API family — an ordinary
+   * provide call for that family carrying `retired: true` and no document. It
+   * deliberately has no way to carry a body, a stability or a stream, which
+   * the server refuses alongside `retired` with 400. Gated like releasing:
+   * the caller needs the 'releaser' role — which a release pipeline already
+   * holds — or a maintainer grant on this Producer, or the server answers 403.
+   */
+  async retire(producername: string, apiType?: string, dryRun?: boolean): Promise<RetiredProtocol | null> {
+    let url = '/provide';
+    if (apiType === 'asyncapi') {
+      url = '/provide/asyncapi';
+    } else if (apiType === 'proto' || apiType === 'grpc') {
+      url = '/provide/grpc';
+    }
+    const payload: Record<string, unknown> = { producername, retired: true };
+    if (dryRun) payload.dry_run = true;
+
+    let response: AxiosResponse;
+    try {
+      response = await this.axiosInstance.post(url, payload, {
+        headers: { 'Content-Type': 'application/json' }
+      });
+    } catch (error: any) {
+      throw await this.translateError(error);
+    }
+    try {
+      return JSON.parse(await this.decodeBody(response)) as RetiredProtocol;
+    } catch {
+      return null;
+    }
   }
 
   private async postProvide(url: string, payload: any, compression: boolean = false): Promise<ProvideResponseBody | null> {
@@ -264,7 +386,8 @@ export class SanshainClient {
     method: string,
     dry_run?: boolean,
     api_type?: string,
-    etag?: string
+    etag?: string,
+    stream?: Stream
   ): Promise<RequireResult> {
     let url = '/require';
     if (api_type === 'asyncapi') {
@@ -273,13 +396,16 @@ export class SanshainClient {
       url = '/require/grpc';
     }
 
+    // Unlike the bundle, the single-endpoint require reads its stream from
+    // the query string.
     const params = {
       consumername,
       producername,
       version,
       path,
       method,
-      dry_run
+      dry_run,
+      ...streamFields(stream)
     };
 
     const headers: Record<string, string> = {};

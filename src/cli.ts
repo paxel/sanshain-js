@@ -1,6 +1,6 @@
 import { Command } from 'commander';
-import { loadConfig, resolveStability } from './config';
-import { SanshainClient, ProvideResponseBody, VersionConflictError } from './api';
+import { loadConfig, resolveStability, resolveStream } from './config';
+import { SanshainClient, ProvideResponseBody, VersionConflictError, describeSubscription, isAdvisory } from './api';
 import { SanshainCache } from './cache';
 import fs from 'fs';
 import path from 'path';
@@ -10,11 +10,13 @@ export const program = new Command();
 program
   .name('sanshain')
   .description('Sanshain CLI client for managing OpenAPI specs')
-  .version('3.0.0')
+  .version('2.3.0')
   .option('-c, --config <path>', 'path to sanshain.yaml', 'sanshain.yaml')
   .option('-u, --url <url>', 'Sanshain service URL')
   .option('-t, --token <token>', 'authentication token')
   .option('--ga', 'provide as immutable GA instead of the default snapshot (also: SANSHAIN_GA=true)', false)
+  .option('--trunk', "this build is trunk's: it maintains the main graph (also: SANSHAIN_TRUNK=true)", false)
+  .option('--tag <branch>', 'this build belongs to a sanshain-branch — release/hotfix pipelines (also: SANSHAIN_TAG)')
   .option('--insecure', 'allow insecure SSL connections', false)
   .option('--force', 're-provide even if the spec file is unchanged (skip the local hash cache)', false)
   .option('--best-effort', 'continue on errors', false);
@@ -49,6 +51,7 @@ program
       const token = globalOptions.token || process.env.SANSHAIN_TOKEN;
       const insecure = globalOptions.insecure || false;
       const stability = resolveStability(globalOptions.ga);
+      const stream = resolveStream(globalOptions.trunk, globalOptions.tag);
 
       const strict = config.strict || false;
 
@@ -102,21 +105,24 @@ program
                 producername: config.serviceName,
                 openapi_yaml: content,
                 stability,
-                dry_run: options.dryRun
+                dry_run: options.dryRun,
+                ...stream
               }, config.compression);
             } else if (effectiveApiType === 'asyncapi') {
               response = await client.provideAsyncApi({
                 producername: config.serviceName,
                 asyncapi_yaml: content,
                 stability,
-                dry_run: options.dryRun
+                dry_run: options.dryRun,
+                ...stream
               }, config.compression);
             } else if (effectiveApiType === 'proto' || effectiveApiType === 'grpc') {
               response = await client.provideProto({
                 producername: config.serviceName,
                 proto_content: content,
                 stability,
-                dry_run: options.dryRun
+                dry_run: options.dryRun,
+                ...stream
               }, config.compression);
             }
           } catch (error: any) {
@@ -137,6 +143,18 @@ program
           if (response) {
             const c = response.changes || { inserts: 0, updates: 0, deletes: 0 };
             console.log(`✓ Provided ${config.serviceName} ${response.version} (${response.stability}): ${c.inserts} new, ${c.updates} updated, ${c.deletes} deleted endpoints`);
+            // Surface the harvest, or the feature is invisible: a subscription
+            // expecting a field no contract guarantees would only be discovered
+            // later, on the GA provide the server refuses. Advisories never
+            // fail the build — that 409 is the server's job.
+            for (const sub of response.harvested_subscriptions || []) {
+              const line = `subscription ${describeSubscription(sub)}`;
+              if (isAdvisory(sub)) {
+                console.warn(`⚠ ${line}`);
+              } else {
+                console.log(`  ${line}`);
+              }
+            }
             const responseHash = response.content_hash || contentHash;
             cache.updateProvideEntry(fileKey, responseHash, response.version);
             cache.save();
@@ -149,7 +167,23 @@ program
         }
       };
 
+      const retireFamily = async (apiType?: string) => {
+        const family = apiType || 'openapi';
+        console.log(`Retiring ${family} for ${config.serviceName}...`);
+        const shed = await client.retire(config.serviceName, family, options.dryRun);
+        const cleared = shed?.tag_cleared ? `: cleared the '${shed.tag_cleared}' capability` : '';
+        console.log(
+          `✓ Retired${cleared}, closed ${shed?.trunk_pins_closed ?? 0} trunk pin(s), released ` +
+            `${shed?.contracts_released ?? 0} contract(s). History and existing pins are untouched.`
+        );
+        provided = true;
+      };
+
       for (const p of provides) {
+        if (p.retired) {
+          await retireFamily(p.apiType);
+          continue;
+        }
         if (p.file) {
           await provideFile(p.file, p.apiType);
         }
@@ -229,6 +263,7 @@ program
 
       const client = new SanshainClient(url, token, insecure);
       const cache = new SanshainCache();
+      const stream = resolveStream(globalOptions.trunk, globalOptions.tag);
 
       for (const req of config.requires) {
         const outputDir = path.resolve(process.cwd(), req.outputDirectory);
@@ -258,7 +293,8 @@ program
               endpoint.method,
               options.dryRun,
               req.apiType,
-              cachedEtag
+              cachedEtag,
+              stream
             );
 
             if (result.notModified) {
@@ -280,13 +316,16 @@ program
             const cachedEntry = cache.getRequireEntry(cacheKey);
             const cachedEtag = cachedEntry?.etag;
 
+            // The bundle takes the stream in the body — the server's bundle
+            // handler reads no query parameters.
             const result = await client.requireBundle({
               consumername: config.serviceName,
               producername: req.serviceName,
               version: req.version,
               endpoints: req.endpoints,
               dry_run: options.dryRun,
-              api_type: req.apiType
+              api_type: req.apiType,
+              ...stream
             }, config.compression, cachedEtag);
 
             if (result.notModified) {

@@ -79,7 +79,7 @@ requires:
 `);
 
     expect(() => loadConfig(testYamlPath)).toThrow(
-      "requires[0] (user-service): version 'latest' must be an exact MAJOR.MINOR.PATCH pin — no ranges, no 'latest'"
+      "requires[0] (user-service): version 'latest' is not a version — pin MAJOR[.MINOR[.PATCH]], optionally v-prefixed (no ranges, no 'latest')"
     );
   });
 

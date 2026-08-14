@@ -1,6 +1,6 @@
 {
-  "name": "sanshainjs",
-  "version": "3.0.0",
+  "name": "sanshain",
+  "version": "2.3.0",
   "main": "dist/index.js",
   "bin": {
     "sanshain": "bin/sanshain.js"

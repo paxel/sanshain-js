@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import yaml from 'js-yaml';
-import { Stability } from './api';
+import { Stability, Stream } from './api';
 
 export interface EndpointConfig {
   method: string;
@@ -19,6 +19,13 @@ export interface RequireConfig {
 export interface ProvideConfig {
   file?: string;
   apiType?: string;
+  /**
+   * The project no longer provides this family. Deleting the entry says
+   * nothing — Sanshain cannot tell a dropped protocol from a pipeline that
+   * merely stopped running — so keeping it and marking it retired is the
+   * explicit act. The provide command turns this into a retire call.
+   */
+  retired?: boolean;
   // Backward compatibility
   openApiFile?: string;
   asyncApiFile?: string;
@@ -50,6 +57,26 @@ export function resolveStability(gaFlag?: boolean): Stability {
     return 'ga';
   }
   return 'snapshot';
+}
+
+/**
+ * Resolve which dependency graph this build's calls belong to, preferring the
+ * explicit flags over SANSHAIN_TRUNK / SANSHAIN_TAG. Declaring both throws:
+ * the server would answer 400, and naming the misconfiguration locally beats
+ * spending a round trip on it.
+ */
+export function resolveStream(trunkFlag?: boolean, tagFlag?: string): Stream {
+  const env = process.env.SANSHAIN_TRUNK;
+  const trunk = Boolean(trunkFlag) || env === 'true' || env === '1';
+  const tag = (tagFlag || process.env.SANSHAIN_TAG || '').trim() || undefined;
+  if (trunk && tag) {
+    throw new Error(
+      `this build declares both trunk and tag '${tag}' — a build belongs to the trunk stream ` +
+        'or to one sanshain-branch, never both; set only one of --trunk / SANSHAIN_TRUNK and ' +
+        '--tag / SANSHAIN_TAG'
+    );
+  }
+  return trunk ? { trunk: true } : tag ? { tag } : {};
 }
 
 export function loadConfig(configPath: string = 'sanshain.yaml'): SanshainConfig {
@@ -91,7 +118,11 @@ function applyEnvOverrides(config: SanshainConfig): void {
   }
 }
 
-const SEMVER_PATTERN = /^\d+\.\d+\.\d+$/;
+// What the server will accept: MAJOR[.MINOR[.PATCH]], optionally v-prefixed.
+// Deliberately no normalization here — the server canonicalizes to three parts
+// and answers with the canonical form; a second normalizer could only ever
+// disagree with it about what 'v2.1' means.
+const PINNABLE_VERSION = /^v?\d+(\.\d+){0,2}$/;
 
 const BRANCH_HINT =
   "'branch' is no longer supported — the branch model was removed in Sanshain 2.0";
@@ -132,6 +163,12 @@ function validateConfig(config: any): void {
     if ('stability' in p) {
       throw new Error(`${context}: 'stability' does not belong in sanshain.yaml — the default is 'snapshot'; pass --ga or set SANSHAIN_GA=true for GA builds`);
     }
+    // A retired entry names its family via apiType alone: the project no
+    // longer provides it, so demanding a spec file would force a dead file to
+    // stay on disk forever.
+    if (p.retired) {
+      return;
+    }
     if (!p.file && !p.openApiFile && !p.asyncApiFile && !p.protoFile) {
       throw new Error(`At least one of file, openApiFile, asyncApiFile, or protoFile must be specified in ${context}`);
     }
@@ -168,9 +205,9 @@ function validateConfig(config: any): void {
         );
       }
       req.version = String(req.version);
-      if (!SEMVER_PATTERN.test(req.version)) {
+      if (!PINNABLE_VERSION.test(req.version)) {
         throw new Error(
-          `${context}: version '${req.version}' must be an exact MAJOR.MINOR.PATCH pin — no ranges, no 'latest'`
+          `${context}: version '${req.version}' is not a version — pin MAJOR[.MINOR[.PATCH]], optionally v-prefixed (no ranges, no 'latest')`
         );
       }
       if (!req.outputDirectory) {

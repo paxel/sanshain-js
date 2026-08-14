@@ -28,3 +28,13 @@ export function sanitize(text: string): string {
     return '?';
   }).join('');
 }
+
+/**
+ * Rewrite CRLF (and stray CR) to LF before upload. Sanshain compares provided
+ * content byte for byte, so a Windows checkout of an otherwise identical file
+ * would hash differently and provoke a spurious 409 version conflict.
+ */
+export function normalizeLineEndings(content: string): string {
+  if (!content.includes('\r')) return content;
+  return content.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+}
