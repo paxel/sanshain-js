@@ -79,6 +79,15 @@ export function resolveStream(trunkFlag?: boolean, tagFlag?: string): Stream {
   return trunk ? { trunk: true } : tag ? { tag } : {};
 }
 
+/**
+ * The directory every relative path in sanshain.yaml resolves against: the one
+ * holding the config file, never the working directory — so a build pointed at
+ * another config via --config finds the same files as one started next to it.
+ */
+export function configBaseDir(configPath: string = 'sanshain.yaml'): string {
+  return path.dirname(path.resolve(process.cwd(), configPath));
+}
+
 export function loadConfig(configPath: string = 'sanshain.yaml'): SanshainConfig {
   const fullPath = path.resolve(process.cwd(), configPath);
   if (!fs.existsSync(fullPath)) {

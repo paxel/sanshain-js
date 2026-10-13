@@ -67,6 +67,8 @@ requires:
         path: /api/v1/login
 ```
 
+Every relative path in `sanshain.yaml` (`file`, `openApiFile`, `asyncApiFile`, `protoFile`, `outputDirectory`) is resolved against the directory that contains `sanshain.yaml`, not the current working directory — so `sanshain --config other/dir/sanshain.yaml provide` finds the same files as a run started in `other/dir`. Absolute paths stay as they are.
+
 The provide **version is never configured here** — it is read from the spec file itself (`info.version` for OpenAPI/AsyncAPI, the `// sanshain-version: MAJOR.MINOR.PATCH` comment for proto).
 
 Branch-era fields (`branch`, `timeout`, `baseVersion`, `releaseBranches`) are rejected at parse time with a migration hint. A `requires` entry without a `version` is a hard error — list a producer's available versions with `GET /producers/<name>/versions`.

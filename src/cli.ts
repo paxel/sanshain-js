@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { loadConfig, resolveStability, resolveStream } from './config';
+import { configBaseDir, loadConfig, resolveStability, resolveStream } from './config';
 import { SanshainClient, ProvideResponseBody, VersionConflictError, describeSubscription, isAdvisory } from './api';
 import { SanshainCache } from './cache';
 import fs from 'fs';
@@ -79,10 +79,11 @@ program
 
       const client = new SanshainClient(url, token, insecure);
       const cache = new SanshainCache();
+      const baseDir = configBaseDir(globalOptions.config);
       let provided = false;
 
       const provideFile = async (filePath: string, apiType?: string) => {
-        const specPath = path.resolve(process.cwd(), filePath);
+        const specPath = path.resolve(baseDir, filePath);
         if (fs.existsSync(specPath)) {
           const content = fs.readFileSync(specPath, 'utf8');
           const effectiveApiType = apiType || 'openapi';
@@ -264,9 +265,10 @@ program
       const client = new SanshainClient(url, token, insecure);
       const cache = new SanshainCache();
       const stream = resolveStream(globalOptions.trunk, globalOptions.tag);
+      const baseDir = configBaseDir(globalOptions.config);
 
       for (const req of config.requires) {
-        const outputDir = path.resolve(process.cwd(), req.outputDirectory);
+        const outputDir = path.resolve(baseDir, req.outputDirectory);
 
         if (!fs.existsSync(outputDir)) {
           fs.mkdirSync(outputDir, { recursive: true });
