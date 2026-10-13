@@ -19,12 +19,12 @@ For recent changes, see [CHANGELOG.md](CHANGELOG.md).
 - Speaks Sanshain Service 2.x only: the provided version is read from the spec file (`info.version`, or the `// sanshain-version:` comment for proto), and every `requires` entry must pin an exact `version` (`MAJOR[.MINOR[.PATCH]]`, optionally `v`-prefixed).
 - The provide summary names the published version and its stability.
 - Spec files are uploaded with LF line endings, so Windows checkouts no longer produce a different content hash.
-- Published on npm as `sanshain` (previously `sanshainjs`); the GitHub Action runs `npx sanshain`.
+- The package is named `sanshain` (was `sanshainjs`) and released to npm; the GitHub Action runs `npx sanshain`.
 - Licensed under Apache-2.0 instead of AGPL-3.0.
 
 ### Removed
 - Git branch detection, the `--branch` option and `SANSHAIN_BRANCH`.
-- `branch`, `timeout`, `baseVersion` and `releaseBranches` in `sanshain.yaml`, and `SANSHAIN_TIMEOUT`; the old fields, and a `stability` field, are rejected by name with a migration hint.
+- `branch` on provide and require entries, `timeout` (top level and per require entry), `baseVersion` and `SANSHAIN_TIMEOUT`; these fields, and `releaseBranches` or a provide `stability`, are rejected by name with a migration hint.
 
 ### Fixed
 - `sanshain --version` reports the real version instead of `2.0.0`.
@@ -54,7 +54,6 @@ For recent changes, see [CHANGELOG.md](CHANGELOG.md).
 ### Fixed
 - GitHub Actions pull-request builds use the source branch instead of `<number>/merge`.
 - A Jenkins `GIT_BRANCH` of `origin/<branch>` no longer keeps the `origin/` prefix.
-- Detached-HEAD checkouts resolve to the branch that contains the commit.
 
 ## [1.0.0] - 2026-04-22
 

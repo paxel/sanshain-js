@@ -14,6 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 - Relative paths in `sanshain.yaml` (`file`, `openApiFile`, `asyncApiFile`, `protoFile`, `outputDirectory`, `catalogInfo`) resolve against the directory containing `sanshain.yaml` instead of the working directory.
+- With `strict`, any field no Sanshain client knows now fails the command; a `serviceName` inside a provide entry, silently ignored before, is reported as unknown.
 - The `SANSHAIN_GA`, `SANSHAIN_TRUNK`, `SANSHAIN_BEST_EFFORT`, `SANSHAIN_STRICT`, `SANSHAIN_FORCE` and `SANSHAIN_COMPRESSION` switches are on for `true` or `1` in any case and with surrounding spaces; most previously accepted only an exact `true`.
 
 ---
