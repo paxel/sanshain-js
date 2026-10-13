@@ -86,11 +86,13 @@ Requires resolve the exact versions pinned in `sanshain.yaml` — the result doe
 
 ## 4. Environment Variables
 
-| Variable         | Description                                                                    |
-|------------------|--------------------------------------------------------------------------------|
-| `SANSHAIN_TOKEN` | **Required**. Your authentication token for the Sanshain Service.              |
-| `SANSHAIN_GA`    | Optional. Set to `true` to provide as immutable GA instead of the default snapshot. |
-| `SANSHAIN_URL`   | Optional. Overrides the `sanshainUrl` in `sanshain.yaml`.                      |
+| Variable         | Description                                                                                 |
+|------------------|---------------------------------------------------------------------------------------------|
+| `SANSHAIN_TOKEN` | **Required**. Your authentication token for the Sanshain Service.                           |
+| `SANSHAIN_GA`    | Optional. Set to `true` to provide as immutable GA instead of the default snapshot.         |
+| `SANSHAIN_URL`   | Optional. Overrides the `sanshainUrl` in `sanshain.yaml` (the `--url` flag overrides both). |
+
+Boolean switches (`SANSHAIN_GA`, `SANSHAIN_TRUNK`, `SANSHAIN_BEST_EFFORT`, `SANSHAIN_STRICT`, `SANSHAIN_FORCE`, `SANSHAIN_COMPRESSION`) are on for `true` or `1` (trimmed, any case); any other value is off.
 
 ## 5. Snapshot vs. GA in CI
 

@@ -159,3 +159,42 @@ describe('paths relative to sanshain.yaml', () => {
     expect(fs.existsSync(path.join(workDir, 'gen'))).toBe(false);
   });
 });
+
+describe('SANSHAIN_URL precedence', () => {
+  const yaml = 'sanshainUrl: http://from-yaml\nserviceName: svc\nprovide:\n  file: openapi.yaml\n';
+  const ok = (axios: any) => axios.post.mockResolvedValue({ status: 202, data: PROVIDE_OK, headers: {} });
+  const baseUrl = (run: RunResult) => run.axios.create.mock.calls[0][0].baseURL;
+
+  it('uses sanshainUrl from the yaml without flag or environment', async () => {
+    const config = writeProject(yaml, { 'openapi.yaml': 'openapi: 3.0.3\n' });
+    expect(baseUrl(await runCli(['-c', config, 'provide'], ok))).toBe('http://from-yaml');
+  });
+
+  it('SANSHAIN_URL overrides the yaml', async () => {
+    const config = writeProject(yaml, { 'openapi.yaml': 'openapi: 3.0.3\n' });
+    process.env.SANSHAIN_URL = 'http://from-env';
+    expect(baseUrl(await runCli(['-c', config, 'provide'], ok))).toBe('http://from-env');
+  });
+
+  it('the --url flag overrides SANSHAIN_URL', async () => {
+    const config = writeProject(yaml, { 'openapi.yaml': 'openapi: 3.0.3\n' });
+    process.env.SANSHAIN_URL = 'http://from-env';
+    expect(baseUrl(await runCli(['-c', config, '--url', 'http://from-flag', 'provide'], ok))).toBe('http://from-flag');
+  });
+});
+
+describe('SANSHAIN_BEST_EFFORT on the command line', () => {
+  it.each(['1', 'TRUE', ' true '])('%j turns a failed provide into a warning', async (value) => {
+    const config = writeProject('sanshainUrl: http://localhost:3000\nserviceName: svc\nprovide:\n  file: missing.yaml\n');
+    process.env.SANSHAIN_BEST_EFFORT = value;
+    const run = await runCli(['-c', config, 'provide']);
+    expect(run.exitCode).toBeUndefined();
+  });
+
+  it('"yes" is off', async () => {
+    const config = writeProject('sanshainUrl: http://localhost:3000\nserviceName: svc\nprovide:\n  file: missing.yaml\n');
+    process.env.SANSHAIN_BEST_EFFORT = 'yes';
+    const run = await runCli(['-c', config, 'provide']);
+    expect(run.exitCode).toBe(1);
+  });
+});

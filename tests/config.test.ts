@@ -1,4 +1,4 @@
-import { loadConfig, resolveStability } from '../src/config';
+import { envFlag, loadConfig, resolveStability, resolveStream } from '../src/config';
 import fs from 'fs';
 import path from 'path';
 
@@ -215,15 +215,75 @@ describe('Stability resolution (ga switch)', () => {
     expect(resolveStability(false)).toBe('ga');
   });
 
-  it('stays snapshot when SANSHAIN_GA is anything but "true"', () => {
-    process.env.SANSHAIN_GA = 'false';
-    expect(resolveStability()).toBe('snapshot');
-    process.env.SANSHAIN_GA = '1';
-    expect(resolveStability()).toBe('snapshot');
+  it('reads SANSHAIN_GA as trimmed, case-insensitive true or 1', () => {
+    for (const on of ['1', 'TRUE', ' true ', 'True']) {
+      process.env.SANSHAIN_GA = on;
+      expect(resolveStability()).toBe('ga');
+    }
+    for (const off of ['false', 'yes', '0', '']) {
+      process.env.SANSHAIN_GA = off;
+      expect(resolveStability()).toBe('snapshot');
+    }
   });
 
   it('the flag wins regardless of the environment', () => {
     process.env.SANSHAIN_GA = 'false';
     expect(resolveStability(true)).toBe('ga');
+  });
+});
+
+describe('SANSHAIN_* boolean switches', () => {
+  const originalEnv = process.env;
+  const testYamlPath = path.resolve(__dirname, 'test-switches-sanshain.yaml');
+
+  beforeEach(() => {
+    process.env = { ...originalEnv };
+    for (const key of Object.keys(process.env)) {
+      if (key.startsWith('SANSHAIN_')) delete process.env[key];
+    }
+    fs.writeFileSync(testYamlPath, 'sanshainUrl: http://localhost:3000\nserviceName: svc\n');
+  });
+
+  afterEach(() => {
+    fs.unlinkSync(testYamlPath);
+  });
+
+  afterAll(() => {
+    process.env = originalEnv;
+  });
+
+  it('envFlag: 1, TRUE and " true " are on; yes, false and unset are off', () => {
+    expect(envFlag('SANSHAIN_X')).toBe(false);
+    for (const on of ['1', 'TRUE', ' true ']) {
+      process.env.SANSHAIN_X = on;
+      expect(envFlag('SANSHAIN_X')).toBe(true);
+    }
+    for (const off of ['yes', 'false', '0', 'on']) {
+      process.env.SANSHAIN_X = off;
+      expect(envFlag('SANSHAIN_X')).toBe(false);
+    }
+  });
+
+  it('SANSHAIN_TRUNK follows the same rule', () => {
+    for (const on of ['1', 'TRUE', ' true ']) {
+      process.env.SANSHAIN_TRUNK = on;
+      expect(resolveStream()).toEqual({ trunk: true });
+    }
+    process.env.SANSHAIN_TRUNK = 'yes';
+    expect(resolveStream()).toEqual({});
+  });
+
+  it.each([
+    ['SANSHAIN_STRICT', 'strict'],
+    ['SANSHAIN_BEST_EFFORT', 'bestEffort'],
+    ['SANSHAIN_FORCE', 'force'],
+    ['SANSHAIN_COMPRESSION', 'compression']
+  ])('%s follows the same rule in the loaded config', (name, field) => {
+    for (const on of ['1', 'TRUE', ' true ']) {
+      process.env[name] = on;
+      expect((loadConfig(testYamlPath) as any)[field]).toBe(true);
+    }
+    process.env[name] = 'yes';
+    expect((loadConfig(testYamlPath) as any)[field]).toBe(false);
   });
 });

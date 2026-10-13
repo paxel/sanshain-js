@@ -47,13 +47,22 @@ export interface SanshainConfig {
 }
 
 /**
+ * Read a SANSHAIN_* boolean switch: trimmed, case-insensitive `true` or `1`
+ * means on; anything else — including unset — means off.
+ */
+export function envFlag(name: string): boolean {
+  const value = (process.env[name] ?? '').trim().toLowerCase();
+  return value === 'true' || value === '1';
+}
+
+/**
  * Decide the stability of a Provide. Always 'snapshot' unless explicitly
  * switched to 'ga' via the --ga CLI flag or the SANSHAIN_GA=true environment
  * variable (typically set by CI on protected-branch pipelines). There is no
  * git or branch magic, and no stability field in sanshain.yaml.
  */
 export function resolveStability(gaFlag?: boolean): Stability {
-  if (gaFlag || process.env.SANSHAIN_GA === 'true') {
+  if (gaFlag || envFlag('SANSHAIN_GA')) {
     return 'ga';
   }
   return 'snapshot';
@@ -66,8 +75,7 @@ export function resolveStability(gaFlag?: boolean): Stability {
  * spending a round trip on it.
  */
 export function resolveStream(trunkFlag?: boolean, tagFlag?: string): Stream {
-  const env = process.env.SANSHAIN_TRUNK;
-  const trunk = Boolean(trunkFlag) || env === 'true' || env === '1';
+  const trunk = Boolean(trunkFlag) || envFlag('SANSHAIN_TRUNK');
   const tag = (tagFlag || process.env.SANSHAIN_TAG || '').trim() || undefined;
   if (trunk && tag) {
     throw new Error(
@@ -114,16 +122,16 @@ function applyEnvOverrides(config: SanshainConfig): void {
     config.clientName = process.env.SANSHAIN_CLIENT_NAME;
   }
   if (process.env.SANSHAIN_COMPRESSION) {
-    config.compression = process.env.SANSHAIN_COMPRESSION === 'true';
+    config.compression = envFlag('SANSHAIN_COMPRESSION');
   }
   if (process.env.SANSHAIN_BEST_EFFORT) {
-    config.bestEffort = process.env.SANSHAIN_BEST_EFFORT === 'true';
+    config.bestEffort = envFlag('SANSHAIN_BEST_EFFORT');
   }
   if (process.env.SANSHAIN_FORCE) {
-    config.force = process.env.SANSHAIN_FORCE === 'true';
+    config.force = envFlag('SANSHAIN_FORCE');
   }
   if (process.env.SANSHAIN_STRICT) {
-    config.strict = process.env.SANSHAIN_STRICT === 'true';
+    config.strict = envFlag('SANSHAIN_STRICT');
   }
 }
 

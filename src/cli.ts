@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { configBaseDir, loadConfig, resolveStability, resolveStream } from './config';
+import { configBaseDir, envFlag, loadConfig, resolveStability, resolveStream } from './config';
 import { SanshainClient, ProvideResponseBody, VersionConflictError, describeSubscription, isAdvisory } from './api';
 import { SanshainCache } from './cache';
 import fs from 'fs';
@@ -32,7 +32,7 @@ program
       try {
         config = loadConfig(globalOptions.config);
       } catch (e) {
-        const bestEffort = globalOptions.bestEffort || process.env.SANSHAIN_BEST_EFFORT === 'true';
+        const bestEffort = globalOptions.bestEffort || envFlag('SANSHAIN_BEST_EFFORT');
         if (bestEffort) {
           console.warn(`Warning loading config: ${(e as Error).message}`);
           config = { bestEffort: true, sanshainUrl: 'http://localhost:8080' };
@@ -42,9 +42,9 @@ program
       }
 
       if (globalOptions.bestEffort) config.bestEffort = true;
-      if (process.env.SANSHAIN_BEST_EFFORT === 'true') config.bestEffort = true;
+      if (envFlag('SANSHAIN_BEST_EFFORT')) config.bestEffort = true;
 
-      const force = globalOptions.force || config.force || process.env.SANSHAIN_FORCE === 'true' || false;
+      const force = globalOptions.force || config.force || envFlag('SANSHAIN_FORCE') || false;
       const bestEffort = config.bestEffort || false;
 
       const url = globalOptions.url || config.sanshainUrl;
@@ -224,7 +224,7 @@ program
       try {
         config = loadConfig(globalOptions.config);
       } catch (e) {
-        const bestEffort = globalOptions.bestEffort || process.env.SANSHAIN_BEST_EFFORT === 'true';
+        const bestEffort = globalOptions.bestEffort || envFlag('SANSHAIN_BEST_EFFORT');
         if (bestEffort) {
           console.warn(`Warning loading config: ${(e as Error).message}`);
           config = { bestEffort: true, sanshainUrl: 'http://localhost:8080' };
@@ -234,7 +234,7 @@ program
       }
 
       if (globalOptions.bestEffort) config.bestEffort = true;
-      if (process.env.SANSHAIN_BEST_EFFORT === 'true') config.bestEffort = true;
+      if (envFlag('SANSHAIN_BEST_EFFORT')) config.bestEffort = true;
 
       const bestEffort = config.bestEffort || false;
 

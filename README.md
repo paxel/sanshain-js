@@ -75,14 +75,20 @@ Branch-era fields (`branch`, `timeout`, `baseVersion`, `releaseBranches`) are re
 
 ### Environment Variable Overrides
 
-| Variable                | Description                                          |
-|-------------------------|------------------------------------------------------|
-| `SANSHAIN_URL`          | Override `sanshainUrl`                               |
-| `SANSHAIN_TOKEN`        | Bearer token for authentication                      |
-| `SANSHAIN_SERVICE_NAME` | Override `serviceName`                               |
-| `SANSHAIN_GA`           | Set to `true` to provide as GA instead of snapshot   |
-| `SANSHAIN_BEST_EFFORT`  | Set to `true` to continue on errors                  |
-| `SANSHAIN_STRICT`       | Set to `true` to fail on missing configuration       |
+| Variable                | Description                                                     |
+|-------------------------|-----------------------------------------------------------------|
+| `SANSHAIN_URL`          | Override `sanshainUrl` (the `--url` flag overrides both)        |
+| `SANSHAIN_TOKEN`        | Bearer token for authentication                                 |
+| `SANSHAIN_SERVICE_NAME` | Override `serviceName`                                          |
+| `SANSHAIN_GA`           | Set to `true` to provide as GA instead of snapshot              |
+| `SANSHAIN_TRUNK`        | Set to `true` on trunk CI (same as `--trunk`)                   |
+| `SANSHAIN_BEST_EFFORT`  | Set to `true` to continue on errors                             |
+| `SANSHAIN_STRICT`       | Set to `true` to fail on missing configuration                  |
+| `SANSHAIN_FORCE`        | Set to `true` to re-provide unchanged spec files                |
+| `SANSHAIN_COMPRESSION`  | Override `compression`                                          |
+
+The URL is taken from the `--url` flag first, then `SANSHAIN_URL`, then `sanshainUrl` in `sanshain.yaml`.
+Boolean switches are on for `true` or `1` (trimmed, any case); any other value is off.
 
 ## Snapshot vs. GA (the `ga` switch)
 
