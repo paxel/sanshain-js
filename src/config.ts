@@ -108,8 +108,12 @@ export function loadConfig(configPath: string = 'sanshain.yaml'): SanshainConfig
   const config = yaml.load(fileContents) as SanshainConfig;
 
   applyEnvOverrides(config);
-  validateConfig(config);
+  // Order matters: removed fields fail by name first, then unknown fields get
+  // the cat (so it shows even when a later validation error follows, e.g. a
+  // misspelt required field), and only then the remaining validation.
+  rejectLegacyFields(config);
   reportUnknownFields(config);
+  validateConfig(config);
 
   return config;
 }
@@ -233,15 +237,9 @@ const BASE_VERSION_HINT =
 const RELEASE_BRANCHES_HINT =
   "'releaseBranches' is no longer supported — stability is 'snapshot' by default; pass --ga or set SANSHAIN_GA=true for GA builds";
 
-function validateConfig(config: any): void {
-  if (!config.sanshainUrl) {
-    throw new Error('Missing required field: sanshainUrl');
-  }
-  if (!config.serviceName && config.clientName) {
-    config.serviceName = config.clientName;
-  }
-
-  // Branch-era fields at the top level are hard errors, by name.
+/** Branch-era fields are hard errors, by name, before any other check. */
+function rejectLegacyFields(config: any): void {
+  if (!isObject(config)) return;
   if ('releaseBranches' in config) {
     throw new Error(RELEASE_BRANCHES_HINT);
   }
@@ -252,7 +250,8 @@ function validateConfig(config: any): void {
     throw new Error(TIMEOUT_HINT);
   }
 
-  const validateProvide = (p: any, index?: number) => {
+  const rejectInProvide = (p: unknown, index?: number) => {
+    if (!isObject(p)) return;
     const context = index !== undefined ? `provides[${index}]` : 'provide';
     if ('branch' in p) {
       throw new Error(`${context}: ${BRANCH_HINT}; remove it — the version is read from the spec file (info.version, or the '// sanshain-version:' comment for proto)`);
@@ -263,6 +262,36 @@ function validateConfig(config: any): void {
     if ('stability' in p) {
       throw new Error(`${context}: 'stability' does not belong in sanshain.yaml — the default is 'snapshot'; pass --ga or set SANSHAIN_GA=true for GA builds`);
     }
+  };
+  rejectInProvide(config.provide);
+  if (Array.isArray(config.provides)) {
+    config.provides.forEach((p, index) => rejectInProvide(p, index));
+  }
+
+  if (Array.isArray(config.requires)) {
+    config.requires.forEach((req, index) => {
+      if (!isObject(req)) return;
+      const context = req.serviceName ? `requires[${index}] (${req.serviceName})` : `requires[${index}]`;
+      if ('branch' in req) {
+        throw new Error(`${context}: ${BRANCH_HINT}; replace with an exact 'version' pin`);
+      }
+      if ('timeout' in req) {
+        throw new Error(`${context}: ${TIMEOUT_HINT}`);
+      }
+    });
+  }
+}
+
+function validateConfig(config: any): void {
+  if (!config.sanshainUrl) {
+    throw new Error('Missing required field: sanshainUrl');
+  }
+  if (!config.serviceName && config.clientName) {
+    config.serviceName = config.clientName;
+  }
+
+  const validateProvide = (p: any, index?: number) => {
+    const context = index !== undefined ? `provides[${index}]` : 'provide';
     // A retired entry names its family via apiType alone: the project no
     // longer provides it, so demanding a spec file would force a dead file to
     // stay on disk forever.
@@ -293,12 +322,6 @@ function validateConfig(config: any): void {
         throw new Error(`Missing serviceName in requires[${index}]`);
       }
       const context = `requires[${index}] (${req.serviceName})`;
-      if ('branch' in req) {
-        throw new Error(`${context}: ${BRANCH_HINT}; replace with an exact 'version' pin`);
-      }
-      if ('timeout' in req) {
-        throw new Error(`${context}: ${TIMEOUT_HINT}`);
-      }
       if (req.version === undefined || req.version === null || req.version === '') {
         throw new Error(
           `${context}: missing 'version' — Sanshain 2.0 pins exact versions; add e.g. version: 1.2.0 (list available: GET /producers/${req.serviceName}/versions)`

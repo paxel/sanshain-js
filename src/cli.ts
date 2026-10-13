@@ -442,7 +442,7 @@ program
       } catch (error: any) {
         if (error instanceof CatalogRejectedError) {
           throw new Error(
-            `Sanshain rejected ${config.catalogInfo}: ${error.serverMessage}. ` +
+            `Sanshain rejected ${catalogPath}: ${error.serverMessage}. ` +
               `The Component's metadata.name must equal serviceName '${config.serviceName}'.`
           );
         }

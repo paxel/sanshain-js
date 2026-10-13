@@ -200,6 +200,29 @@ describe('SANSHAIN_BEST_EFFORT on the command line', () => {
 });
 
 describe('unknown fields on the command line', () => {
+  it('the cat shows on the best-effort fallback when a later validation error follows', async () => {
+    const config = writeProject(
+      [
+        'sanshainUrl: http://localhost:3000',
+        'serviceName: svc',
+        'requires:',
+        '  - serviceName: users',
+        '    verison: 1.0.0',
+        '    outputDirectory: gen',
+        '    endpoints:',
+        '      - method: GET',
+        '        path: /users',
+        ''
+      ].join('\n')
+    );
+
+    const run = await runCli(['-c', config, '--best-effort', 'require']);
+
+    expect(run.exitCode).toBeUndefined();
+    expect(run.err).toContain("sanshain.yaml: unknown field 'requires[0].verison' - ignored");
+    expect(run.err).toContain("missing 'version'");
+  });
+
   it('without strict: one cat on stderr, then the provide runs normally', async () => {
     const config = writeProject('sanshainUrl: http://localhost:3000\nserviceName: svc\ncatalogInf: x\nprovide:\n  file: openapi.yaml\n', {
       'openapi.yaml': 'openapi: 3.0.3\n'
@@ -329,7 +352,7 @@ describe('catalog', () => {
 
     expect(run.exitCode).toBe(1);
     expect(run.err).toContain(
-      "Sanshain rejected backstage/catalog-info.yaml: no Component named 'orders-service'. " +
+      `Sanshain rejected ${path.join(projectDir, 'backstage/catalog-info.yaml')}: no Component named 'orders-service'. ` +
         "The Component's metadata.name must equal serviceName 'orders-service'."
     );
   });
@@ -342,7 +365,7 @@ describe('catalog', () => {
     );
 
     expect(run.exitCode).toBeUndefined();
-    expect(run.err).toContain('Sanshain rejected backstage/catalog-info.yaml: bad.');
+    expect(run.err).toContain(`Sanshain rejected ${path.join(projectDir, 'backstage/catalog-info.yaml')}: bad.`);
     expect(run.err).toContain('Continuing (best effort)');
   });
 

@@ -84,7 +84,7 @@ Any other field the CLI does not know — a typo such as `catalogInf` or `requir
  ---U-U---
 ```
 
-With `strict` on, the same message ends in `rejected (strict)` and the command fails, even under best-effort. Fields that other Sanshain clients support (`insecure`, `combine`) are accepted silently.
+The message comes right after the removed-field checks, before any other validation, so it also shows when a typo leads to a follow-up error (such as a missing `version`). With `strict` on, the same message ends in `rejected (strict)` and the command fails, even under best-effort. Fields that other Sanshain clients support (`insecure`, `combine`) are accepted silently.
 
 ### Environment Variable Overrides
 

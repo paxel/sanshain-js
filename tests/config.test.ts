@@ -379,6 +379,43 @@ describe('unknown fields (the puzzled cat)', () => {
     );
   });
 
+  const typoedVersion = [
+    'sanshainUrl: http://localhost:3000',
+    'serviceName: svc',
+    'requires:',
+    '  - serviceName: users',
+    '    verison: 1.0.0',
+    '    outputDirectory: gen',
+    '    endpoints:',
+    '      - method: GET',
+    '        path: /users',
+    ''
+  ].join('\n');
+
+  it('the cat shows before a validation error the typo causes', () => {
+    expect(() => load(typoedVersion)).toThrow("requires[0] (users): missing 'version'");
+    expect(stderr).toHaveBeenCalledTimes(1);
+    expect(stderr.mock.calls[0][0]).toBe(cat("sanshain.yaml: unknown field 'requires[0].verison' - ignored"));
+  });
+
+  it('under strict, unknown fields fail before any other validation', () => {
+    expect(() => load(`strict: true\n${typoedVersion}`)).toThrow(
+      "sanshain.yaml: unknown field 'requires[0].verison' - rejected (strict)"
+    );
+  });
+
+  it('the cat shows even when sanshainUrl is missing', () => {
+    expect(() => load('serviceName: svc\nsanshainUrll: http://x\n')).toThrow('Missing required field: sanshainUrl');
+    expect(stderr.mock.calls[0][0]).toBe(cat("sanshain.yaml: unknown field 'sanshainUrll' - ignored"));
+  });
+
+  it('a legacy field in requires errors by name, before any cat', () => {
+    expect(() =>
+      load(typoedVersion.replace('    verison: 1.0.0', '    verison: 1.0.0\n    branch: main'))
+    ).toThrow("requires[0] (users): 'branch' is no longer supported");
+    expect(stderr).not.toHaveBeenCalled();
+  });
+
   it('a legacy field still errors by name, before any cat', () => {
     expect(() =>
       load('sanshainUrl: http://localhost:3000\nserviceName: svc\ncatalogInf: x\nprovide:\n  file: a.yaml\n  baseVersion: 5\n')
