@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { configBaseDir, envFlag, loadConfig, resolveStability, resolveStream } from './config';
+import { UnknownFieldsError, configBaseDir, envFlag, loadConfig, resolveStability, resolveStream } from './config';
 import { SanshainClient, ProvideResponseBody, VersionConflictError, describeSubscription, isAdvisory } from './api';
 import { SanshainCache } from './cache';
 import fs from 'fs';
@@ -33,7 +33,8 @@ program
         config = loadConfig(globalOptions.config);
       } catch (e) {
         const bestEffort = globalOptions.bestEffort || envFlag('SANSHAIN_BEST_EFFORT');
-        if (bestEffort) {
+        // Strict rejecting unknown fields is a config error best-effort never softens.
+        if (bestEffort && !(e instanceof UnknownFieldsError)) {
           console.warn(`Warning loading config: ${(e as Error).message}`);
           config = { bestEffort: true, sanshainUrl: 'http://localhost:8080' };
         } else {
@@ -225,7 +226,8 @@ program
         config = loadConfig(globalOptions.config);
       } catch (e) {
         const bestEffort = globalOptions.bestEffort || envFlag('SANSHAIN_BEST_EFFORT');
-        if (bestEffort) {
+        // Strict rejecting unknown fields is a config error best-effort never softens.
+        if (bestEffort && !(e instanceof UnknownFieldsError)) {
           console.warn(`Warning loading config: ${(e as Error).message}`);
           config = { bestEffort: true, sanshainUrl: 'http://localhost:8080' };
         } else {

@@ -107,8 +107,89 @@ export function loadConfig(configPath: string = 'sanshain.yaml'): SanshainConfig
 
   applyEnvOverrides(config);
   validateConfig(config);
+  reportUnknownFields(config);
 
   return config;
+}
+
+/** Strict mode refuses a sanshain.yaml with unknown fields; best-effort does not soften it. */
+export class UnknownFieldsError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'UnknownFieldsError';
+  }
+}
+
+// Every field any Sanshain client knows. A field another client supports but
+// this one does not is still known: one sanshain.yaml serves every client.
+const KNOWN_TOP = new Set([
+  'sanshainUrl', 'serviceName', 'clientName', 'compression', 'bestEffort', 'strict', 'force',
+  'insecure', 'combine', 'catalogInfo', 'provide', 'provides', 'requires'
+]);
+const KNOWN_PROVIDE = new Set(['file', 'apiType', 'retired', 'openApiFile', 'asyncApiFile', 'protoFile', 'combine']);
+const KNOWN_REQUIRE = new Set(['serviceName', 'apiType', 'version', 'outputDirectory', 'endpoints']);
+const KNOWN_ENDPOINT = new Set(['method', 'path']);
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** The paths of all unknown fields, in file order (js-yaml keeps key order). */
+export function findUnknownFields(config: unknown): string[] {
+  const unknown: string[] = [];
+  const scan = (node: unknown, known: Set<string>, prefix: string, nested?: (key: string, value: unknown, at: string) => void) => {
+    if (!isObject(node)) return;
+    for (const [key, value] of Object.entries(node)) {
+      const at = prefix ? `${prefix}.${key}` : key;
+      if (!known.has(key)) {
+        unknown.push(at);
+      } else if (nested) {
+        nested(key, value, at);
+      }
+    }
+  };
+  scan(config, KNOWN_TOP, '', (key, value, at) => {
+    if (key === 'provide') {
+      scan(value, KNOWN_PROVIDE, at);
+    } else if ((key === 'provides' || key === 'requires') && Array.isArray(value)) {
+      value.forEach((entry, i) => {
+        const entryAt = `${at}[${i}]`;
+        if (key === 'provides') {
+          scan(entry, KNOWN_PROVIDE, entryAt);
+        } else {
+          scan(entry, KNOWN_REQUIRE, entryAt, (reqKey, reqValue, reqAt) => {
+            if (reqKey === 'endpoints' && Array.isArray(reqValue)) {
+              reqValue.forEach((endpoint, j) => scan(endpoint, KNOWN_ENDPOINT, `${reqAt}[${j}]`));
+            }
+          });
+        }
+      });
+    }
+  });
+  return unknown;
+}
+
+/** The one-line verdict on unknown fields, e.g. "sanshain.yaml: unknown field 'x' - ignored". */
+export function unknownFieldsLine(fields: string[], strict: boolean): string {
+  const names = fields.map((f) => `'${f}'`).join(', ');
+  const noun = fields.length === 1 ? 'field' : 'fields';
+  return `sanshain.yaml: unknown ${noun} ${names} - ${strict ? 'rejected (strict)' : 'ignored'}`;
+}
+
+/** The puzzled cat around that verdict, printed once to stderr. */
+export function puzzledCat(line: string): string {
+  return ['   /\\_/\\  ?', `  ( O_o )   ${line}`, ' ---U-U---'].join('\n');
+}
+
+function reportUnknownFields(config: SanshainConfig): void {
+  const fields = findUnknownFields(config);
+  if (fields.length === 0) return;
+  const strict = Boolean(config.strict);
+  const line = unknownFieldsLine(fields, strict);
+  console.error(puzzledCat(line));
+  if (strict) {
+    throw new UnknownFieldsError(line);
+  }
 }
 
 function applyEnvOverrides(config: SanshainConfig): void {

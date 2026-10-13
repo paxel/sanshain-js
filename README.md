@@ -73,6 +73,16 @@ The provide **version is never configured here** — it is read from the spec fi
 
 Branch-era fields (`branch`, `timeout`, `baseVersion`, `releaseBranches`) are rejected at parse time with a migration hint. A `requires` entry without a `version` is a hard error — list a producer's available versions with `GET /producers/<name>/versions`.
 
+Any other field the CLI does not know — a typo such as `catalogInf` or `requires[0].outputDirectroy` — is reported once on stderr and ignored:
+
+```
+   /\_/\  ?
+  ( O_o )   sanshain.yaml: unknown field 'catalogInf' - ignored
+ ---U-U---
+```
+
+With `strict` on, the same message ends in `rejected (strict)` and the command fails, even under best-effort. Fields that other Sanshain clients support (`insecure`, `combine`) are accepted silently.
+
 ### Environment Variable Overrides
 
 | Variable                | Description                                                     |
@@ -253,6 +263,7 @@ When strict mode is enabled:
 - Missing `serviceName` → exit with error
 - No `provides` configured → exit with error
 - No `requires` configured → exit with error
+- Unknown fields in `sanshain.yaml` → exit with error (best-effort does not soften this)
 
 ## CI/CD Integration
 

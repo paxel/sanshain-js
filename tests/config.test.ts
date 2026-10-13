@@ -1,4 +1,4 @@
-import { envFlag, loadConfig, resolveStability, resolveStream } from '../src/config';
+import { UnknownFieldsError, envFlag, loadConfig, resolveStability, resolveStream } from '../src/config';
 import fs from 'fs';
 import path from 'path';
 
@@ -285,5 +285,121 @@ describe('SANSHAIN_* boolean switches', () => {
     }
     process.env[name] = 'yes';
     expect((loadConfig(testYamlPath) as any)[field]).toBe(false);
+  });
+});
+
+describe('unknown fields (the puzzled cat)', () => {
+  const originalEnv = process.env;
+  const testYamlPath = path.resolve(__dirname, 'test-unknown-sanshain.yaml');
+  let stderr: jest.SpyInstance;
+
+  // Written out literally, not built from the source, so an escaping slip shows.
+  const cat = (line: string) => String.raw`   /\_/\  ?` + '\n' + `  ( O_o )   ${line}` + '\n' + ' ---U-U---';
+
+  beforeEach(() => {
+    process.env = { ...originalEnv };
+    for (const key of Object.keys(process.env)) {
+      if (key.startsWith('SANSHAIN_')) delete process.env[key];
+    }
+    stderr = jest.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    stderr.mockRestore();
+    if (fs.existsSync(testYamlPath)) fs.unlinkSync(testYamlPath);
+  });
+
+  afterAll(() => {
+    process.env = originalEnv;
+  });
+
+  const load = (yaml: string) => {
+    fs.writeFileSync(testYamlPath, yaml);
+    return loadConfig(testYamlPath);
+  };
+
+  it('prints the cat once for a single unknown field and carries on', () => {
+    const config = load('sanshainUrl: http://localhost:3000\nserviceName: svc\ncatalogInf: catalog-info.yaml\n');
+
+    expect(config.serviceName).toBe('svc');
+    expect(stderr).toHaveBeenCalledTimes(1);
+    expect(stderr.mock.calls[0][0]).toBe(cat("sanshain.yaml: unknown field 'catalogInf' - ignored"));
+  });
+
+  it('names several unknown fields in file order, with nested paths', () => {
+    load(
+      [
+        'sanshainUrl: http://localhost:3000',
+        'serviceName: svc',
+        'catalogInf: catalog-info.yaml',
+        'provide:',
+        '  file: a.yaml',
+        '  fiel: b.yaml',
+        'provides:',
+        '  - file: c.yaml',
+        '  - file: d.yaml',
+        '    verison: 1',
+        'requires:',
+        '  - serviceName: users',
+        '    version: 1.0.0',
+        '    outputDirectory: gen',
+        '    outputDirectroy: gen2',
+        '    endpoints:',
+        '      - method: GET',
+        '        path: /a',
+        '      - method: GET',
+        '        path: /b',
+        '      - methd: GET',
+        '        method: GET',
+        '        path: /c',
+        ''
+      ].join('\n')
+    );
+
+    expect(stderr).toHaveBeenCalledTimes(1);
+    expect(stderr.mock.calls[0][0]).toBe(
+      cat(
+        "sanshain.yaml: unknown fields 'catalogInf', 'provide.fiel', 'provides[1].verison', " +
+          "'requires[0].outputDirectroy', 'requires[0].endpoints[2].methd' - ignored"
+      )
+    );
+  });
+
+  it('strict fails with the cat saying rejected (strict)', () => {
+    expect(() => load('sanshainUrl: http://localhost:3000\nserviceName: svc\nstrict: true\ncatalogInf: x\n')).toThrow(
+      UnknownFieldsError
+    );
+    expect(stderr.mock.calls[0][0]).toBe(cat("sanshain.yaml: unknown field 'catalogInf' - rejected (strict)"));
+  });
+
+  it('SANSHAIN_STRICT makes it strict too', () => {
+    process.env.SANSHAIN_STRICT = '1';
+    expect(() => load('sanshainUrl: http://localhost:3000\nserviceName: svc\ncatalogInf: x\n')).toThrow(
+      "sanshain.yaml: unknown field 'catalogInf' - rejected (strict)"
+    );
+  });
+
+  it('a legacy field still errors by name, before any cat', () => {
+    expect(() =>
+      load('sanshainUrl: http://localhost:3000\nserviceName: svc\ncatalogInf: x\nprovide:\n  file: a.yaml\n  baseVersion: 5\n')
+    ).toThrow("provide: 'baseVersion' is no longer supported");
+    expect(stderr).not.toHaveBeenCalled();
+  });
+
+  it('fields known to other clients but unused here give no cat', () => {
+    load(
+      [
+        'sanshainUrl: http://localhost:3000',
+        'serviceName: svc',
+        'insecure: true',
+        'combine: true',
+        'catalogInfo: catalog-info.yaml',
+        'provides:',
+        '  - file: a.yaml',
+        '    combine: true',
+        ''
+      ].join('\n')
+    );
+    expect(stderr).not.toHaveBeenCalled();
   });
 });

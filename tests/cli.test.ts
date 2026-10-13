@@ -198,3 +198,33 @@ describe('SANSHAIN_BEST_EFFORT on the command line', () => {
     expect(run.exitCode).toBe(1);
   });
 });
+
+describe('unknown fields on the command line', () => {
+  it('without strict: one cat on stderr, then the provide runs normally', async () => {
+    const config = writeProject('sanshainUrl: http://localhost:3000\nserviceName: svc\ncatalogInf: x\nprovide:\n  file: openapi.yaml\n', {
+      'openapi.yaml': 'openapi: 3.0.3\n'
+    });
+
+    const run = await runCli(['-c', config, 'provide'], (axios) => {
+      axios.post.mockResolvedValue({ status: 202, data: PROVIDE_OK, headers: {} });
+    });
+
+    expect(run.exitCode).toBeUndefined();
+    expect(run.axios.post).toHaveBeenCalledTimes(1);
+    expect(run.err.match(/O_o/g)).toHaveLength(1);
+    expect(run.err).toContain("sanshain.yaml: unknown field 'catalogInf' - ignored");
+  });
+
+  it('strict fails the command even under best-effort', async () => {
+    const config = writeProject(
+      'sanshainUrl: http://localhost:3000\nserviceName: svc\nstrict: true\ncatalogInf: x\nprovide:\n  file: openapi.yaml\n',
+      { 'openapi.yaml': 'openapi: 3.0.3\n' }
+    );
+
+    const run = await runCli(['-c', config, '--best-effort', 'require']);
+
+    expect(run.exitCode).toBe(1);
+    expect(run.err).toContain("sanshain.yaml: unknown field 'catalogInf' - rejected (strict)");
+    expect(run.err).not.toContain('Continuing (best effort)');
+  });
+});
