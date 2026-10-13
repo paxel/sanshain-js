@@ -431,3 +431,10 @@ describe('catalog', () => {
     expect(run.err).toContain(path.join(projectDir, 'backstage/catalog-info.yaml'));
   });
 });
+
+describe('version', () => {
+  it('--version reports the package version', () => {
+    const { program } = require('../src/cli');
+    expect(program.version()).toBe(require('../package.json').version);
+  });
+});
