@@ -228,3 +228,206 @@ describe('unknown fields on the command line', () => {
     expect(run.err).not.toContain('Continuing (best effort)');
   });
 });
+
+describe('catalog', () => {
+  const CATALOG = 'apiVersion: backstage.io/v1alpha1\nkind: Component\nmetadata:\n  name: orders-service\n';
+  const yaml = (extra = 'catalogInfo: backstage/catalog-info.yaml\n') =>
+    `sanshainUrl: http://localhost:3000\nserviceName: orders-service\n${extra}`;
+  const recorded = (trunk: boolean) => ({
+    status: 200,
+    data: JSON.stringify({
+      system: 'orders-service',
+      trunk,
+      resources: ['resource:default/orders-db', 'resource:default/orders-bucket']
+    }),
+    headers: {}
+  });
+  const httpError = (status: number, body: unknown) => ({
+    response: { status, data: JSON.stringify(body), headers: {} }
+  });
+
+  it('a plain build pushes the file relative to sanshain.yaml, without trunk or tag', async () => {
+    const config = writeProject(yaml(), { 'backstage/catalog-info.yaml': CATALOG });
+
+    const run = await runCli(['-c', config, 'catalog'], (axios) => axios.put.mockResolvedValue(recorded(false)));
+
+    expect(run.exitCode).toBeUndefined();
+    expect(run.axios.put).toHaveBeenCalledTimes(1);
+    expect(run.axios.put.mock.calls[0][0]).toBe('/catalog/orders-service');
+    expect(run.axios.put.mock.calls[0][1]).toEqual({ catalog_info_yaml: CATALOG });
+  });
+
+  it('a trunk build sends trunk: true', async () => {
+    const config = writeProject(yaml(), { 'backstage/catalog-info.yaml': CATALOG });
+
+    const run = await runCli(['-c', config, '--trunk', 'catalog'], (axios) => axios.put.mockResolvedValue(recorded(true)));
+
+    expect(run.axios.put.mock.calls[0][1]).toEqual({ catalog_info_yaml: CATALOG, trunk: true });
+  });
+
+  it('SANSHAIN_TRUNK=1 is a trunk build too', async () => {
+    const config = writeProject(yaml(), { 'backstage/catalog-info.yaml': CATALOG });
+    process.env.SANSHAIN_TRUNK = '1';
+
+    const run = await runCli(['-c', config, 'catalog'], (axios) => axios.put.mockResolvedValue(recorded(true)));
+
+    expect(run.axios.put.mock.calls[0][1]).toEqual({ catalog_info_yaml: CATALOG, trunk: true });
+  });
+
+  it('a tag build sends neither trunk nor tag', async () => {
+    const config = writeProject(yaml(), { 'backstage/catalog-info.yaml': CATALOG });
+
+    const run = await runCli(['-c', config, '--tag', 'R1', 'catalog'], (axios) =>
+      axios.put.mockResolvedValue(recorded(false))
+    );
+
+    expect(run.exitCode).toBeUndefined();
+    expect(run.axios.put.mock.calls[0][1]).toEqual({ catalog_info_yaml: CATALOG });
+  });
+
+  it('URL-encodes the service name', async () => {
+    const config = writeProject(
+      'sanshainUrl: http://localhost:3000\nserviceName: team/orders service\ncatalogInfo: c.yaml\n',
+      { 'c.yaml': CATALOG }
+    );
+
+    const run = await runCli(['-c', config, 'catalog'], (axios) => axios.put.mockResolvedValue(recorded(false)));
+
+    expect(run.axios.put.mock.calls[0][0]).toBe('/catalog/team%2Forders%20service');
+  });
+
+  it('gzips the payload when compression is on', async () => {
+    const config = writeProject(yaml('catalogInfo: c.yaml\ncompression: true\n'), { 'c.yaml': CATALOG });
+
+    const run = await runCli(['-c', config, 'catalog'], (axios) => axios.put.mockResolvedValue(recorded(false)));
+
+    const [, body, options] = run.axios.put.mock.calls[0];
+    expect(options.headers['Content-Encoding']).toBe('gzip');
+    expect(JSON.parse(require('zlib').gunzipSync(body).toString('utf8'))).toEqual({ catalog_info_yaml: CATALOG });
+  });
+
+  it('prints the recorded resources on 200', async () => {
+    const config = writeProject(yaml(), { 'backstage/catalog-info.yaml': CATALOG });
+
+    const trunkRun = await runCli(['-c', config, '--trunk', 'catalog'], (axios) =>
+      axios.put.mockResolvedValue(recorded(true))
+    );
+    expect(trunkRun.out).toContain(
+      'Catalog recorded for orders-service (main+dev): 2 resources\n  resource:default/orders-db\n  resource:default/orders-bucket'
+    );
+
+    const devRun = await runCli(['-c', config, 'catalog'], (axios) => axios.put.mockResolvedValue(recorded(false)));
+    expect(devRun.out).toContain('Catalog recorded for orders-service (dev): 2 resources');
+  });
+
+  it('fails on 400 naming the file and the metadata.name rule', async () => {
+    const config = writeProject(yaml(), { 'backstage/catalog-info.yaml': CATALOG });
+
+    const run = await runCli(['-c', config, 'catalog'], (axios) =>
+      axios.put.mockRejectedValue(httpError(400, { error: "no Component named 'orders-service'" }))
+    );
+
+    expect(run.exitCode).toBe(1);
+    expect(run.err).toContain(
+      "Sanshain rejected backstage/catalog-info.yaml: no Component named 'orders-service'. " +
+        "The Component's metadata.name must equal serviceName 'orders-service'."
+    );
+  });
+
+  it('best-effort turns a 400 into a warning and exits 0', async () => {
+    const config = writeProject(yaml(), { 'backstage/catalog-info.yaml': CATALOG });
+
+    const run = await runCli(['-c', config, '--best-effort', 'catalog'], (axios) =>
+      axios.put.mockRejectedValue(httpError(400, { error: 'bad' }))
+    );
+
+    expect(run.exitCode).toBeUndefined();
+    expect(run.err).toContain('Sanshain rejected backstage/catalog-info.yaml: bad.');
+    expect(run.err).toContain('Continuing (best effort)');
+  });
+
+  it('a 404 says the command needs Sanshain Service 2.4.0, naming the server version', async () => {
+    const config = writeProject(yaml(), { 'backstage/catalog-info.yaml': CATALOG });
+
+    const run = await runCli(['-c', config, 'catalog'], (axios) => {
+      axios.put.mockRejectedValue(httpError(404, { error: 'not found' }));
+      axios.get.mockResolvedValue({ status: 200, data: JSON.stringify({ version: '2.3.0' }), headers: {} });
+    });
+
+    expect(run.exitCode).toBe(1);
+    expect(run.axios.get).toHaveBeenCalledWith('/version', expect.any(Object));
+    expect(run.err).toContain('sanshain catalog needs Sanshain Service 2.4.0 or later (server is 2.3.0)');
+  });
+
+  it('a 404 with an unknown server version says so', async () => {
+    const config = writeProject(yaml(), { 'backstage/catalog-info.yaml': CATALOG });
+
+    const run = await runCli(['-c', config, 'catalog'], (axios) => {
+      axios.put.mockRejectedValue(httpError(404, {}));
+      axios.get.mockRejectedValue(new Error('connection refused'));
+    });
+
+    expect(run.exitCode).toBe(1);
+    expect(run.err).toContain('sanshain catalog needs Sanshain Service 2.4.0 or later (server version unknown)');
+  });
+
+  it('other failures use the normal error mapping', async () => {
+    const config = writeProject(yaml(), { 'backstage/catalog-info.yaml': CATALOG });
+
+    const run = await runCli(['-c', config, 'catalog'], (axios) => {
+      axios.put.mockRejectedValue(httpError(500, { error: 'boom' }));
+      axios.get.mockResolvedValue({ status: 200, data: JSON.stringify({ version: '2.4.0' }), headers: {} });
+    });
+
+    expect(run.exitCode).toBe(1);
+    expect(run.err).toContain('Request failed with status 500');
+  });
+
+  it('without catalogInfo: warns and exits 0, sending nothing', async () => {
+    const config = writeProject(yaml(''));
+
+    const run = await runCli(['-c', config, 'catalog']);
+
+    expect(run.exitCode).toBeUndefined();
+    expect(run.err).toContain('No catalogInfo in sanshain.yaml - skipping catalog.');
+    expect(run.axios.put).not.toHaveBeenCalled();
+  });
+
+  it('without catalogInfo under strict: fails', async () => {
+    const config = writeProject(yaml('strict: true\n'));
+
+    const run = await runCli(['-c', config, 'catalog']);
+
+    expect(run.exitCode).toBe(1);
+    expect(run.err).toContain('strict: sanshain.yaml has no catalogInfo');
+  });
+
+  it('strict does not ask for provides or requires', async () => {
+    const config = writeProject(yaml('catalogInfo: c.yaml\nstrict: true\n'), { 'c.yaml': CATALOG });
+
+    const run = await runCli(['-c', config, 'catalog'], (axios) => axios.put.mockResolvedValue(recorded(false)));
+
+    expect(run.exitCode).toBeUndefined();
+    expect(run.axios.put).toHaveBeenCalledTimes(1);
+  });
+
+  it('a missing file fails naming the resolved path', async () => {
+    const config = writeProject(yaml());
+
+    const run = await runCli(['-c', config, 'catalog']);
+
+    expect(run.exitCode).toBe(1);
+    expect(run.err).toContain(path.join(projectDir, 'backstage/catalog-info.yaml'));
+    expect(run.axios.put).not.toHaveBeenCalled();
+  });
+
+  it('a missing file under best-effort warns and exits 0', async () => {
+    const config = writeProject(yaml());
+    process.env.SANSHAIN_BEST_EFFORT = 'true';
+
+    const run = await runCli(['-c', config, 'catalog']);
+
+    expect(run.exitCode).toBeUndefined();
+    expect(run.err).toContain(path.join(projectDir, 'backstage/catalog-info.yaml'));
+  });
+});

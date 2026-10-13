@@ -84,6 +84,17 @@ npx sanshain require
 
 Requires resolve the exact versions pinned in `sanshain.yaml` — the result does not depend on which branch CI is building.
 
+### Catalog (Push catalog-info.yaml)
+
+If `sanshain.yaml` names a Backstage file with `catalogInfo`, add one step per build that pushes it, so Sanshain shows the Peripheral Resources (databases, buckets, queues) your Component depends on. Needs Sanshain Service 2.4.0 or later.
+
+```bash
+npx sanshain catalog                         # feature branches: dev graph
+SANSHAIN_TRUNK=true npx sanshain catalog     # trunk pipeline: main graph as well
+```
+
+A `400` fails the build when the file's Component `metadata.name` differs from `serviceName`; without `catalogInfo` the step only warns.
+
 ## 4. Environment Variables
 
 | Variable         | Description                                                                                 |

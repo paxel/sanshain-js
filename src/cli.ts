@@ -1,6 +1,13 @@
 import { Command } from 'commander';
 import { UnknownFieldsError, configBaseDir, envFlag, loadConfig, resolveStability, resolveStream } from './config';
-import { SanshainClient, ProvideResponseBody, VersionConflictError, describeSubscription, isAdvisory } from './api';
+import {
+  CatalogRejectedError,
+  SanshainClient,
+  ProvideResponseBody,
+  VersionConflictError,
+  describeSubscription,
+  isAdvisory
+} from './api';
 import { SanshainCache } from './cache';
 import fs from 'fs';
 import path from 'path';
@@ -357,6 +364,92 @@ program
       }
     } catch (error: any) {
       console.error(`Error during require: ${error.message}`);
+      if (!(config.bestEffort || false)) {
+        process.exit(1);
+      } else {
+        console.warn('Continuing (best effort)');
+      }
+    }
+  });
+
+program
+  .command('catalog')
+  .description("Push the system's Backstage catalog-info.yaml (catalogInfo) to Sanshain — needs Sanshain Service 2.4.0")
+  .action(async () => {
+    let config: any = { bestEffort: false };
+    try {
+      const globalOptions = program.opts();
+      try {
+        config = loadConfig(globalOptions.config);
+      } catch (e) {
+        const bestEffort = globalOptions.bestEffort || envFlag('SANSHAIN_BEST_EFFORT');
+        // Strict rejecting unknown fields is a config error best-effort never softens.
+        if (bestEffort && !(e instanceof UnknownFieldsError)) {
+          console.warn(`Warning loading config: ${(e as Error).message}`);
+          config = { bestEffort: true, sanshainUrl: 'http://localhost:8080' };
+        } else {
+          throw e;
+        }
+      }
+
+      if (globalOptions.bestEffort) config.bestEffort = true;
+      if (envFlag('SANSHAIN_BEST_EFFORT')) config.bestEffort = true;
+
+      const url = globalOptions.url || config.sanshainUrl;
+      const token = globalOptions.token || process.env.SANSHAIN_TOKEN;
+      const insecure = globalOptions.insecure || false;
+      const strict = config.strict || false;
+
+      // Strict here checks only what this command needs — never provides/requires.
+      if (!config.serviceName) {
+        if (strict) {
+          console.error('serviceName is required (in sanshain.yaml or via SANSHAIN_SERVICE_NAME)');
+          process.exit(1);
+        }
+        console.warn('⚠ No serviceName configured. Skipping catalog. Set strict: true to fail in this case.');
+        return;
+      }
+
+      if (!config.catalogInfo) {
+        if (strict) {
+          console.error('strict: sanshain.yaml has no catalogInfo');
+          process.exit(1);
+        }
+        console.warn('No catalogInfo in sanshain.yaml - skipping catalog.');
+        return;
+      }
+
+      const stream = resolveStream(globalOptions.trunk, globalOptions.tag);
+      const catalogPath = path.resolve(configBaseDir(globalOptions.config), config.catalogInfo);
+      let content: string;
+      try {
+        content = fs.readFileSync(catalogPath, 'utf8');
+      } catch (e) {
+        throw new Error(`Cannot read catalogInfo file ${catalogPath}: ${(e as Error).message}`);
+      }
+
+      const client = new SanshainClient(url, token, insecure);
+      console.log(`Pushing catalog ${config.catalogInfo} for ${config.serviceName} to ${url}...`);
+      try {
+        const recorded = await client.pushCatalog(config.serviceName, content, stream, config.compression);
+        const resources = recorded.resources || [];
+        console.log(
+          `Catalog recorded for ${recorded.system} (${recorded.trunk ? 'main+dev' : 'dev'}): ${resources.length} resources`
+        );
+        for (const resource of resources) {
+          console.log(`  ${resource}`);
+        }
+      } catch (error: any) {
+        if (error instanceof CatalogRejectedError) {
+          throw new Error(
+            `Sanshain rejected ${config.catalogInfo}: ${error.serverMessage}. ` +
+              `The Component's metadata.name must equal serviceName '${config.serviceName}'.`
+          );
+        }
+        throw error;
+      }
+    } catch (error: any) {
+      console.error(`Error pushing catalog: ${error.message}`);
       if (!(config.bestEffort || false)) {
         process.exit(1);
       } else {

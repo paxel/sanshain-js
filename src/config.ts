@@ -41,6 +41,8 @@ export interface SanshainConfig {
   bestEffort?: boolean;
   force?: boolean;
   strict?: boolean;
+  /** Path to the Backstage catalog-info.yaml the catalog command pushes. */
+  catalogInfo?: string;
   provide?: ProvideConfig;
   provides?: ProvideConfig[];
   requires?: RequireConfig[];

@@ -12,11 +12,13 @@ Sanshain (Japanese for "Sunshine") is a specialized REST service designed to man
 - **Consumers pin exact versions.** Every `requires` entry carries a `version`; there is no fallback and nothing waits.
 - **Stability is a switch, not git magic.** Every provide is a `snapshot` unless you explicitly pass `--ga` (or set `SANSHAIN_GA=true`).
 
+`sanshain catalog` needs **Sanshain Service 2.4.0** or later; all other commands work with any 2.x service.
+
 If you point this client at a pre-2.0 Sanshain server, it will detect that (one lazy `GET /version` after a failure) and tell you to upgrade the server.
 
 ## Features
 
-- **CLI Tool**: Easy-to-use commands for `provide` and `require` operations.
+- **CLI Tool**: Easy-to-use commands for `provide`, `require` and `catalog` operations.
 - **Maven-like Lifecycle**: Easily integrates into `package.json` scripts for automatic build-time updates.
 - **Deduplication**: Automatically handles shared DTOs using Sanshain's bundle API.
 - **Version Pinning**: `requires` entries pin exact producer versions — builds are reproducible by construction.
@@ -52,6 +54,7 @@ npm install --save-dev sanshain
 sanshainUrl: http://localhost:3000
 serviceName: my-ts-service
 compression: true
+catalogInfo: catalog-info.yaml    # optional: Backstage file pushed by `sanshain catalog`
 
 provides:
   - file: src/docs/openapi.yaml   # version is read from the file's info.version
@@ -183,6 +186,29 @@ Download the pinned endpoint snippets and bundles as defined in `sanshain.yaml`:
 sanshain require
 ```
 
+### Catalog
+
+Push the system's Backstage `catalog-info.yaml` (the `catalogInfo` field, relative to `sanshain.yaml`) so Sanshain can show the **Peripheral Resources** — databases, buckets, queues — the Component lists under `spec.dependsOn`. Needs Sanshain Service 2.4.0 or later.
+
+```bash
+sanshain catalog            # updates the dev graph
+sanshain catalog --trunk    # trunk CI: updates the main graph as well
+```
+
+On success the CLI prints the recorded resources:
+
+```
+Catalog recorded for orders-service (main+dev): 1 resources
+  resource:default/orders-db
+```
+
+- Without `catalogInfo` the command warns `No catalogInfo in sanshain.yaml - skipping catalog.` and exits 0 (fails under strict).
+- A `400` means Sanshain could not read the file as this project's Component — usually a `metadata.name` that is not the `serviceName`. The build fails so the mismatch gets fixed.
+- A `404` means the service is older than 2.4.0; the CLI checks `GET /version` and names it.
+- Under best-effort every failure is a warning and the command exits 0.
+
+Run it once per build as its own CI step, next to `provide`/`require` — see [CI/CD Integration](docs/ci-integration.md).
+
 ## Failure Modes
 
 Sanshain 2.0 fails fast and self-service; the CLI surfaces each case distinctly:
@@ -245,7 +271,7 @@ The local cache is stored at `node_modules/.cache/sanshain/state.json` with the 
 
 ## Strict Mode
 
-By default, the CLI warns and skips when configuration is incomplete (no `serviceName`, no `provides`, no `requires`). This makes it safe to include both commands in build scripts even if only one applies.
+By default, the CLI warns and skips when configuration is incomplete (no `serviceName`, no `provides`, no `requires`, no `catalogInfo`). This makes it safe to include both commands in build scripts even if only one applies.
 
 To fail on missing configuration, enable strict mode:
 
@@ -263,6 +289,7 @@ When strict mode is enabled:
 - Missing `serviceName` → exit with error
 - No `provides` configured → exit with error
 - No `requires` configured → exit with error
+- No `catalogInfo` configured (for `sanshain catalog`, which checks only `serviceName` and `catalogInfo`) → exit with error
 - Unknown fields in `sanshain.yaml` → exit with error (best-effort does not soften this)
 
 ## CI/CD Integration

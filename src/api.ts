@@ -159,6 +159,31 @@ export class AbsentEndpointError extends Error {
   }
 }
 
+/** `PUT /catalog/{systemname}` — the system's Backstage catalog-info.yaml. */
+export interface CatalogPushPayload {
+  catalog_info_yaml: string;
+  /** Only on a trunk build; absent otherwise. Never a tag: the server refuses unknown fields. */
+  trunk?: boolean;
+}
+
+/** The periphery the server now records for the system. */
+export interface CatalogPushResponse {
+  system: string;
+  trunk: boolean;
+  resources: string[];
+}
+
+/** 400 on a catalog push — the file is not readable as this system's Component. */
+export class CatalogRejectedError extends Error {
+  serverMessage: string;
+
+  constructor(serverMessage: string) {
+    super(serverMessage);
+    this.name = 'CatalogRejectedError';
+    this.serverMessage = serverMessage;
+  }
+}
+
 interface ErrorBody {
   error?: string;
   proposed_version?: string;
@@ -170,6 +195,7 @@ export class SanshainClient {
   private baseUrl: string;
   private serverVersionChecked = false;
   private oldServerMessage: string | null = null;
+  private serverVersion: string | null = null;
 
   constructor(baseUrl: string, token?: string, insecure: boolean = false) {
     this.token = token;
@@ -250,6 +276,7 @@ export class SanshainClient {
       const parsed = JSON.parse(body);
       const serverVersion: string | undefined = parsed?.version;
       if (serverVersion) {
+        this.serverVersion = serverVersion;
         const major = parseInt(serverVersion.split('.')[0], 10);
         if (!isNaN(major) && major < 2) {
           this.oldServerMessage = `Sanshain server at ${this.baseUrl} is ${serverVersion}; this client requires Sanshain 2.x — upgrade the server.`;
@@ -347,6 +374,46 @@ export class SanshainClient {
     } catch {
       return null;
     }
+  }
+
+  /**
+   * Push the system's catalog-info.yaml. Needs Sanshain Service 2.4.0: an
+   * older server answers 404, which the same lazy GET /version check turns
+   * into an upgrade hint naming the server's version.
+   */
+  async pushCatalog(
+    systemname: string,
+    catalogInfoYaml: string,
+    stream?: Stream,
+    compression: boolean = false
+  ): Promise<CatalogPushResponse> {
+    const payload: CatalogPushPayload = { catalog_info_yaml: catalogInfoYaml };
+    if (stream?.trunk) payload.trunk = true;
+
+    let data: any = payload;
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (compression) {
+      data = await compress(JSON.stringify(payload));
+      headers['Content-Encoding'] = 'gzip';
+    }
+
+    let response: AxiosResponse;
+    try {
+      response = await this.axiosInstance.put(`/catalog/${encodeURIComponent(systemname)}`, data, { headers });
+    } catch (error: any) {
+      const status: number | undefined = error?.response?.status;
+      if (status === 400) {
+        const bodyText = await this.decodeBody(error.response);
+        throw new CatalogRejectedError(this.parseErrorBody(bodyText).error || sanitize(bodyText));
+      }
+      if (status === 404) {
+        await this.diagnoseOldServer();
+        const server = this.serverVersion ? `server is ${this.serverVersion}` : 'server version unknown';
+        throw new Error(`sanshain catalog needs Sanshain Service 2.4.0 or later (${server})`);
+      }
+      throw await this.translateError(error);
+    }
+    return JSON.parse(await this.decodeBody(response)) as CatalogPushResponse;
   }
 
   private async postProvide(url: string, payload: any, compression: boolean = false): Promise<ProvideResponseBody | null> {

@@ -43,11 +43,24 @@ Omit `ga` (or set it to `'false'`) — the default is always a snapshot:
     token: ${{ secrets.SANSHAIN_TOKEN }}
 ```
 
+### Push catalog-info.yaml
+
+Needs `catalogInfo` in `sanshain.yaml` and Sanshain Service 2.4.0 or later:
+
+```yaml
+- name: Push Catalog
+  uses: paxel/sanshain/sanshain-js@v3
+  with:
+    command: catalog
+    token: ${{ secrets.SANSHAIN_TOKEN }}
+    trunk: ${{ github.ref == 'refs/heads/main' }}
+```
+
 ### Inputs
 
 | Input               | Required | Default   | Description                                                        |
 |---------------------|----------|-----------|--------------------------------------------------------------------|
-| `command`           | yes      | —         | `provide` or `require`.                                            |
+| `command`           | yes      | —         | `provide`, `require` or `catalog` (needs Sanshain Service 2.4.0).  |
 | `token`             | no       | —         | Sanshain API token (or set the `SANSHAIN_TOKEN` env/secret).       |
 | `ga`                | no       | `'false'` | `'true'` publishes as immutable GA (maps to `SANSHAIN_GA`).        |
 | `working-directory` | no       | `'.'`     | Directory where `sanshain.yaml` is located.                        |

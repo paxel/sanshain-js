@@ -3,7 +3,7 @@ description: 'Manage OpenAPI specs with Sanshain Service (Provide/Require)'
 author: 'Patrick Zimmer'
 inputs:
   command:
-    description: 'The command to execute (provide or require)'
+    description: 'The command to execute: provide, require or catalog (catalog pushes the catalogInfo file and needs Sanshain Service 2.4.0)'
     required: true
   token:
     description: 'Sanshain API token (optional if set via SANSHAIN_TOKEN secret)'
