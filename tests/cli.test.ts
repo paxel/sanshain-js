@@ -21,6 +21,8 @@ interface RunResult {
 async function runCli(args: string[], mock: (axios: any) => void = () => {}): Promise<RunResult> {
   let cli: any;
   let axios: any;
+  // The automocked axios is shared between isolated registries: start clean.
+  jest.clearAllMocks();
   jest.isolateModules(() => {
     axios = require('axios');
     cli = require('../src/cli');
@@ -459,5 +461,103 @@ describe('version', () => {
   it('--version reports the package version', () => {
     const { program } = require('../src/cli');
     expect(program.version()).toBe(require('../package.json').version);
+  });
+});
+
+describe('no provide skip, no dry-run caching', () => {
+  const PROVIDE_YAML = 'sanshainUrl: http://localhost:3000\nserviceName: svc\nprovide:\n  file: openapi.yaml\n';
+  // The server answers the real content hash, which is what the old local
+  // skip compared against.
+  const SPEC = 'openapi: 3.0.3\n';
+  const ok = (axios: any) =>
+    axios.post.mockResolvedValue({
+      status: 202,
+      data: JSON.stringify({
+        ...JSON.parse(PROVIDE_OK),
+        content_hash: 'sha256:' + require('crypto').createHash('sha256').update(SPEC, 'utf8').digest('hex')
+      }),
+      headers: {}
+    });
+  const statePath = () => path.join(workDir, 'node_modules/.cache/sanshain/state.json');
+
+  it('a dry-run provide does not stop the following real provide from uploading', async () => {
+    const config = writeProject(PROVIDE_YAML, { 'openapi.yaml': 'openapi: 3.0.3\n' });
+
+    const dry = await runCli(['-c', config, 'provide', '--dry-run'], ok);
+    expect(dry.axios.post).toHaveBeenCalledTimes(1);
+    expect(dry.axios.post.mock.calls[0][1].dry_run).toBe(true);
+
+    const real = await runCli(['-c', config, 'provide'], ok);
+    expect(real.exitCode).toBeUndefined();
+    expect(real.axios.post).toHaveBeenCalledTimes(1);
+    expect(real.axios.post.mock.calls[0][1].dry_run).toBe(false);
+    expect(real.out).not.toContain('unchanged');
+  });
+
+  it('two consecutive provides of the same file both upload', async () => {
+    const config = writeProject(PROVIDE_YAML, { 'openapi.yaml': 'openapi: 3.0.3\n' });
+
+    const first = await runCli(['-c', config, 'provide'], ok);
+    expect(first.axios.post).toHaveBeenCalledTimes(1);
+
+    const second = await runCli(['-c', config, 'provide'], ok);
+    expect(second.axios.post).toHaveBeenCalledTimes(1);
+  });
+
+  it('a provides entry left in an old state.json is ignored', async () => {
+    const config = writeProject(PROVIDE_YAML, { 'openapi.yaml': 'openapi: 3.0.3\n' });
+    fs.mkdirSync(path.dirname(statePath()), { recursive: true });
+    fs.writeFileSync(
+      statePath(),
+      JSON.stringify({
+        provides: { 'openapi.yaml': { content_hash: 'sha256:' + require('crypto').createHash('sha256').update(SPEC, 'utf8').digest('hex'), version: '1.0.0', last_provided: '2026-01-01T00:00:00Z' } },
+        requires: {}
+      })
+    );
+
+    const run = await runCli(['-c', config, 'provide'], ok);
+
+    expect(run.exitCode).toBeUndefined();
+    expect(run.axios.post).toHaveBeenCalledTimes(1);
+  });
+
+  const REQUIRE_YAML = [
+    'sanshainUrl: http://localhost:3000',
+    'serviceName: svc',
+    'requires:',
+    '  - serviceName: users',
+    '    version: 1.0.0',
+    '    outputDirectory: gen',
+    '    endpoints:',
+    '      - method: GET',
+    '        path: /users',
+    ''
+  ].join('\n');
+  const withEtag = (axios: any) =>
+    axios.get.mockResolvedValue({ status: 200, data: Buffer.from('paths: {}'), headers: { etag: '"sha256:e1"' } });
+  const sentEtag = (run: RunResult) => run.axios.get.mock.calls[0][1].headers['If-None-Match'];
+
+  it('a dry-run require records no ETag', async () => {
+    const config = writeProject(REQUIRE_YAML);
+
+    const dry = await runCli(['-c', config, 'require', '--dry-run'], withEtag);
+    expect(dry.exitCode).toBeUndefined();
+    expect(fs.existsSync(statePath())).toBe(false);
+
+    const real = await runCli(['-c', config, 'require'], withEtag);
+    expect(sentEtag(real)).toBeUndefined();
+  });
+
+  it('a normal require still sends the stored ETag as If-None-Match', async () => {
+    const config = writeProject(REQUIRE_YAML);
+
+    const first = await runCli(['-c', config, 'require'], withEtag);
+    expect(sentEtag(first)).toBeUndefined();
+    const second = await runCli(['-c', config, 'require'], (axios) =>
+      axios.get.mockResolvedValue({ status: 304, data: Buffer.from(''), headers: {} })
+    );
+
+    expect(sentEtag(second)).toBe('"sha256:e1"');
+    expect(second.out).toContain('unchanged (304)');
   });
 });

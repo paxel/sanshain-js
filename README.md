@@ -25,7 +25,6 @@ If you point this client at a pre-2.0 Sanshain server, it will detect that (one 
 - **Stability Switch**: `snapshot` by default; `--ga` / `SANSHAIN_GA=true` for immutable GA publishes (set it on protected-branch pipelines).
 - **GZIP Compression**: Efficient data transfer for large specifications.
 - **CI/CD Ready**: Built-in support for any CI/CD platform (GitLab, Jenkins, GitHub, etc.).
-- **Content Caching**: Skips provide when spec file is unchanged (SHA-256 hash match).
 - **ETag Caching**: Skips require when server spec is unchanged (304 Not Modified).
 - **Strict Mode**: Optional strict validation for CI environments.
 
@@ -97,7 +96,7 @@ The message comes right after the removed-field checks, before any other validat
 | `SANSHAIN_TRUNK`        | Set to `true` on trunk CI (same as `--trunk`)                   |
 | `SANSHAIN_BEST_EFFORT`  | Set to `true` to continue on errors                             |
 | `SANSHAIN_STRICT`       | Set to `true` to fail on missing configuration                  |
-| `SANSHAIN_FORCE`        | Set to `true` to re-provide unchanged spec files                |
+| `SANSHAIN_FORCE`        | No effect (accepted for compatibility; every provide uploads)   |
 | `SANSHAIN_COMPRESSION`  | Override `compression`                                          |
 
 The URL is taken from the `--url` flag first, then `SANSHAIN_URL`, then `sanshainUrl` in `sanshain.yaml`.
@@ -227,15 +226,9 @@ Sanshain 2.0 fails fast and self-service; the CLI surfaces each case distinctly:
 
 ## Caching
 
-### Client-Side Content Caching (Skip-if-unchanged)
+### Provide always uploads
 
-Before uploading, the CLI computes the SHA-256 hash of the spec file and compares it with the cached hash from the last provide. If unchanged:
-
-```
-⏭ Spec unchanged (hash match), skipping provide.
-```
-
-Use `--force` (or `SANSHAIN_FORCE=true`) to re-provide anyway. Server-side, re-providing byte-identical content is an idempotent no-op, so CI re-runs never fight.
+`sanshain provide` uploads every spec file on every run; Sanshain treats re-providing byte-identical content as an idempotent no-op, so CI re-runs never fight. `--force`, `force: true` and `SANSHAIN_FORCE` are still accepted but have no effect.
 
 ### Require-Side ETag Caching
 
@@ -245,7 +238,7 @@ The CLI stores the `ETag` from require responses and sends `If-None-Match` on su
 ⏭ user-service spec unchanged (304), skipping code generation.
 ```
 
-A pin on a GA version can never change content; a pin on a snapshot can — which is exactly what the ETag detects.
+A pin on a GA version can never change content; a pin on a snapshot can — which is exactly what the ETag detects. A `--dry-run` require stores no ETag.
 
 ### State File
 
@@ -253,13 +246,6 @@ The local cache is stored at `node_modules/.cache/sanshain/state.json` with the 
 
 ```json
 {
-  "provides": {
-    "openapi.yaml": {
-      "content_hash": "sha256:abc123...",
-      "version": "1.4.0",
-      "last_provided": "2026-04-25T12:00:00Z"
-    }
-  },
   "requires": {
     "user-service|1.2.0|GET|/api/v1/users": {
       "etag": "\"sha256:def456...\"",
@@ -268,6 +254,8 @@ The local cache is stored at `node_modules/.cache/sanshain/state.json` with the 
   }
 }
 ```
+
+A `provides` section written by older clients is ignored.
 
 ## Strict Mode
 

@@ -1,12 +1,5 @@
 import fs from 'fs';
 import path from 'path';
-import crypto from 'crypto';
-
-export interface ProvideEntry {
-  content_hash: string;
-  version: string;
-  last_provided: string;
-}
 
 export interface RequireEntry {
   etag: string;
@@ -14,7 +7,8 @@ export interface RequireEntry {
 }
 
 export interface CacheState {
-  provides: Record<string, ProvideEntry>;
+  /** Written by clients before 2.4.0, which skipped unchanged provides; kept as-is and ignored. */
+  provides?: unknown;
   requires: Record<string, RequireEntry>;
 }
 
@@ -34,13 +28,13 @@ export class SanshainCache {
   private load(): CacheState {
     try {
       if (fs.existsSync(this.cacheFile)) {
-        const data = fs.readFileSync(this.cacheFile, 'utf8');
-        return JSON.parse(data);
+        const data = JSON.parse(fs.readFileSync(this.cacheFile, 'utf8'));
+        return { ...data, requires: data?.requires ?? {} };
       }
     } catch {
       // Corrupted cache — start fresh
     }
-    return { provides: {}, requires: {} };
+    return { requires: {} };
   }
 
   save(): void {
@@ -49,18 +43,6 @@ export class SanshainCache {
       fs.mkdirSync(dir, { recursive: true });
     }
     fs.writeFileSync(this.cacheFile, JSON.stringify(this.state, null, 2));
-  }
-
-  getProvideEntry(key: string): ProvideEntry | undefined {
-    return this.state.provides[key];
-  }
-
-  updateProvideEntry(key: string, contentHash: string, version: string): void {
-    this.state.provides[key] = {
-      content_hash: contentHash,
-      version,
-      last_provided: new Date().toISOString()
-    };
   }
 
   getRequireEntry(key: string): RequireEntry | undefined {
@@ -72,11 +54,6 @@ export class SanshainCache {
       etag,
       last_fetched: new Date().toISOString()
     };
-  }
-
-  static computeHash(content: string): string {
-    const hash = crypto.createHash('sha256').update(content, 'utf8').digest('hex');
-    return `sha256:${hash}`;
   }
 
   static requireKey(serviceName: string, version: string, method: string, apiPath: string): string {

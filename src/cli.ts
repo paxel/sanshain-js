@@ -25,7 +25,7 @@ program
   .option('--trunk', "this build is trunk's: it maintains the main graph (also: SANSHAIN_TRUNK=true)", false)
   .option('--tag <branch>', 'this build belongs to a sanshain-branch — release/hotfix pipelines (also: SANSHAIN_TAG)')
   .option('--insecure', 'allow insecure SSL connections', false)
-  .option('--force', 're-provide even if the spec file is unchanged (skip the local hash cache)', false)
+  .option('--force', 'no effect, kept for compatibility (every provide uploads)', false)
   .option('--best-effort', 'continue on errors', false);
 
 program
@@ -52,7 +52,6 @@ program
       if (globalOptions.bestEffort) config.bestEffort = true;
       if (envFlag('SANSHAIN_BEST_EFFORT')) config.bestEffort = true;
 
-      const force = globalOptions.force || config.force || envFlag('SANSHAIN_FORCE') || false;
       const bestEffort = config.bestEffort || false;
 
       const url = globalOptions.url || config.sanshainUrl;
@@ -86,7 +85,6 @@ program
       }
 
       const client = new SanshainClient(url, token, insecure);
-      const cache = new SanshainCache();
       const baseDir = configBaseDir(globalOptions.config);
       let provided = false;
 
@@ -95,15 +93,8 @@ program
         if (fs.existsSync(specPath)) {
           const content = fs.readFileSync(specPath, 'utf8');
           const effectiveApiType = apiType || 'openapi';
-          const fileKey = path.basename(filePath);
-
-          // Client-side content caching — skip if unchanged (unless force)
-          const contentHash = SanshainCache.computeHash(content);
-          const cachedEntry = cache.getProvideEntry(fileKey);
-          if (!force && cachedEntry && contentHash === cachedEntry.content_hash) {
-            console.log('⏭ Spec unchanged (hash match), skipping provide.');
-            return;
-          }
+          // No local skip-if-unchanged: every provide uploads, and the server
+          // treats an identical re-provide as a no-op.
 
           console.log(`Providing ${effectiveApiType} ${config.serviceName} (stability: ${stability}) to ${url}...`);
 
@@ -164,9 +155,6 @@ program
                 console.log(`  ${line}`);
               }
             }
-            const responseHash = response.content_hash || contentHash;
-            cache.updateProvideEntry(fileKey, responseHash, response.version);
-            cache.save();
           }
 
           provided = true;
@@ -317,7 +305,8 @@ program
             fs.writeFileSync(path.join(outputDir, fileName), result.content!);
             console.log(`Saved ${fileName} to ${req.outputDirectory}`);
 
-            if (result.etag) {
+            // A dry run records nothing, locally either.
+            if (result.etag && !options.dryRun) {
               cache.updateRequireEntry(cacheKey, result.etag);
               cache.save();
             }
@@ -348,7 +337,8 @@ program
             fs.writeFileSync(path.join(outputDir, fileName), result.content!);
             console.log(`Saved ${fileName} to ${req.outputDirectory}`);
 
-            if (result.etag) {
+            // A dry run records nothing, locally either.
+            if (result.etag && !options.dryRun) {
               cache.updateRequireEntry(cacheKey, result.etag);
               cache.save();
             }
