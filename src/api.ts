@@ -193,6 +193,13 @@ interface ErrorBody {
   proposed_version?: string;
 }
 
+/** Whether a server version string is older than MAJOR.MINOR. */
+function versionBelow(version: string, major: number, minor: number): boolean {
+  const [maj, min] = version.replace(/^v/, '').split('.').map((part) => parseInt(part, 10));
+  if (isNaN(maj)) return false;
+  return maj < major || (maj === major && (isNaN(min) ? 0 : min) < minor);
+}
+
 export class SanshainClient {
   private axiosInstance: AxiosInstance;
   private token?: string;
@@ -495,10 +502,26 @@ export class SanshainClient {
         validateStatus: (status) => status === 200 || status === 304
       });
     } catch (error: any) {
+      // A service older than 2.4.0 refuses the unknown query field with 400.
+      if (format && error?.response?.status === 400) {
+        const bodyText = await this.decodeBody(error.response);
+        const message = this.parseErrorBody(bodyText).error || bodyText;
+        if (/format/i.test(message)) {
+          await this.diagnoseOldServer();
+          if (!this.serverVersion || versionBelow(this.serverVersion, 2, 4)) {
+            throw this.formatNeedsServerError();
+          }
+        }
+      }
       throw await this.translateError(error);
     }
 
     return this.checkFormat(await this.toRequireResult(response), format);
+  }
+
+  private formatNeedsServerError(): Error {
+    const server = this.serverVersion ? `server is ${this.serverVersion}` : 'server version unknown';
+    return new Error(`format: openapi needs Sanshain Service 2.4.0 or later (${server})`);
   }
 
   async requireBundle(
@@ -558,8 +581,7 @@ export class SanshainClient {
     }
     if (isOpenApi) return result;
     await this.diagnoseOldServer();
-    const server = this.serverVersion ? `server is ${this.serverVersion}` : 'server version unknown';
-    throw new Error(`format: openapi needs Sanshain Service 2.4.0 or later (${server})`);
+    throw this.formatNeedsServerError();
   }
 
   private async toRequireResult(response: AxiosResponse): Promise<RequireResult> {

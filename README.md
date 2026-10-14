@@ -108,7 +108,7 @@ requires:
         path: user/signup
 ```
 
-`format: openapi` needs Sanshain Service 2.4.0 or later. An older service ignores the request and answers AsyncAPI; the CLI detects that, writes nothing, and fails with `format: openapi needs Sanshain Service 2.4.0 or later (server is <version>)` (a warning under best-effort).
+`format: openapi` needs Sanshain Service 2.4.0 or later. An older service rejects the single-endpoint request or returns AsyncAPI; the client reports that it needs 2.4.0. It writes nothing and fails with `format: openapi needs Sanshain Service 2.4.0 or later (server is <version>)` (a warning under best-effort).
 
 ### Environment Variable Overrides
 

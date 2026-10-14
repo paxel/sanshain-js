@@ -699,6 +699,57 @@ describe('format: openapi on asyncapi requires', () => {
     expect(fs.existsSync(output('events.yaml'))).toBe(false);
   });
 
+  const rejectFormat = (serverVersion: string | null, error: string) => (axios: any) =>
+    axios.get.mockImplementation(async (url: string) => {
+      if (url === '/version') {
+        if (serverVersion === null) throw new Error('connection refused');
+        return { status: 200, data: JSON.stringify({ version: serverVersion }), headers: {} };
+      }
+      throw { response: { status: 400, data: JSON.stringify({ error }), headers: {} } };
+    });
+
+  it('a 400 on the single route from a pre-2.4.0 service means it needs 2.4.0', async () => {
+    const config = writeProject(entry('    apiType: asyncapi\n    format: openapi'));
+
+    const run = await runCli(['-c', config, 'require'], rejectFormat('2.3.0', 'unknown field `format`'));
+
+    expect(run.exitCode).toBe(1);
+    expect(run.err).toContain('format: openapi needs Sanshain Service 2.4.0 or later (server is 2.3.0)');
+    expect(run.err).not.toContain('unknown field');
+    expect(fs.existsSync(output('events.yaml'))).toBe(false);
+  });
+
+  it('the same 400 with /version failing says the server version is unknown', async () => {
+    const config = writeProject(entry('    apiType: asyncapi\n    format: openapi'));
+
+    const run = await runCli(['-c', config, 'require'], rejectFormat(null, 'unknown field `format`'));
+
+    expect(run.exitCode).toBe(1);
+    expect(run.err).toContain('format: openapi needs Sanshain Service 2.4.0 or later (server version unknown)');
+  });
+
+  it("a 2.4.0 service's own 400 passes through unchanged", async () => {
+    const config = writeProject(entry('    apiType: asyncapi\n    format: openapi'));
+    const conversion = 'cannot render format openapi: message payload is Avro';
+
+    const run = await runCli(['-c', config, 'require'], rejectFormat('2.4.0', conversion));
+
+    expect(run.exitCode).toBe(1);
+    expect(run.err).toContain(conversion);
+    expect(run.err).not.toContain('needs Sanshain Service 2.4.0');
+  });
+
+  it('best-effort turns the old-service 400 into a warning and writes nothing', async () => {
+    const config = writeProject(entry('    apiType: asyncapi\n    format: openapi'));
+
+    const run = await runCli(['-c', config, '--best-effort', 'require'], rejectFormat('2.3.0', 'unknown field `format`'));
+
+    expect(run.exitCode).toBeUndefined();
+    expect(run.err).toContain('format: openapi needs Sanshain Service 2.4.0 or later (server is 2.3.0)');
+    expect(run.err).toContain('Continuing (best effort)');
+    expect(fs.existsSync(output('events.yaml'))).toBe(false);
+  });
+
   it('the ETag is kept per format', async () => {
     const withFormat = entry('    apiType: asyncapi\n    format: openapi');
     const without = entry('    apiType: asyncapi');
