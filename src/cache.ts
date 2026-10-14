@@ -56,11 +56,13 @@ export class SanshainCache {
     };
   }
 
-  static requireKey(serviceName: string, version: string, method: string, apiPath: string): string {
-    return `${serviceName}|${version}|${method}|${apiPath}`;
+  // A requested format is part of the key, so the two renderings of one
+  // entry never share an ETag; without one the key is unchanged.
+  static requireKey(serviceName: string, version: string, method: string, apiPath: string, format?: string): string {
+    return `${serviceName}|${version}|${method}|${apiPath}${format ? `|${format}` : ''}`;
   }
 
-  static requireBundleKey(serviceName: string, version: string): string {
-    return `${serviceName}|${version}|bundle`;
+  static requireBundleKey(serviceName: string, version: string, format?: string): string {
+    return `${serviceName}|${version}|bundle${format ? `|${format}` : ''}`;
   }
 }

@@ -10,6 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 - `sanshain catalog` pushes the Backstage `catalog-info.yaml` named by the new `catalogInfo` field in `sanshain.yaml`, so Sanshain records the Peripheral Resources the system depends on; the GitHub Action accepts `command: catalog`.
 - `catalog` requires Sanshain Service 2.4.0; all other commands work with any 2.x service.
+- `format: openapi` on a `requires` entry with `apiType: asyncapi` downloads the pinned channels as an OpenAPI document under the usual file name; needs Sanshain Service 2.4.0.
 - Unknown fields in `sanshain.yaml` (typos such as `catalogInf`) are reported once on stderr and ignored; with `strict` the command fails, even under best-effort.
 
 ### Changed

@@ -1,4 +1,5 @@
 import axios, { AxiosInstance, AxiosResponse } from 'axios';
+import yaml from 'js-yaml';
 import { compress, decompress, normalizeLineEndings, sanitize } from './utils';
 
 export type Stability = 'snapshot' | 'ga';
@@ -100,6 +101,9 @@ export interface ProvideResponseBody {
    */
   harvested_subscriptions?: HarvestedSubscription[];
 }
+
+/** The only conversion a require can ask for: an AsyncAPI channel rendered as OpenAPI. */
+export type RequireFormat = 'openapi';
 
 export interface RequireResult {
   content: string | null;
@@ -454,7 +458,8 @@ export class SanshainClient {
     dry_run?: boolean,
     api_type?: string,
     etag?: string,
-    stream?: Stream
+    stream?: Stream,
+    format?: RequireFormat
   ): Promise<RequireResult> {
     let url = '/require';
     if (api_type === 'asyncapi') {
@@ -472,7 +477,8 @@ export class SanshainClient {
       path,
       method,
       dry_run,
-      ...streamFields(stream)
+      ...streamFields(stream),
+      ...(format ? { format } : {})
     };
 
     const headers: Record<string, string> = {};
@@ -492,13 +498,14 @@ export class SanshainClient {
       throw await this.translateError(error);
     }
 
-    return this.toRequireResult(response);
+    return this.checkFormat(await this.toRequireResult(response), format);
   }
 
   async requireBundle(
     payload: RequireBundlePayload,
     compression: boolean = false,
-    etag?: string
+    etag?: string,
+    format?: RequireFormat
   ): Promise<RequireResult> {
     const dataWithFallback = {
       ...payload,
@@ -522,6 +529,8 @@ export class SanshainClient {
     let response: AxiosResponse;
     try {
       response = await this.axiosInstance.post('/require-bundle', data, {
+        // The bundle reads its stream from the body, but format from the query.
+        ...(format ? { params: { format } } : {}),
         headers,
         responseType: 'arraybuffer',
         validateStatus: (status) => status === 200 || status === 304
@@ -530,7 +539,27 @@ export class SanshainClient {
       throw await this.translateError(error);
     }
 
-    return this.toRequireResult(response);
+    return this.checkFormat(await this.toRequireResult(response), format);
+  }
+
+  /**
+   * With format: openapi the answer must be an OpenAPI document. A service
+   * older than 2.4.0 ignores the parameter and answers AsyncAPI, which would
+   * otherwise be written silently under the OpenAPI expectation.
+   */
+  private async checkFormat(result: RequireResult, format?: RequireFormat): Promise<RequireResult> {
+    if (format !== 'openapi' || result.notModified) return result;
+    let isOpenApi = false;
+    try {
+      const doc = yaml.load(result.content ?? '');
+      isOpenApi = typeof doc === 'object' && doc !== null && 'openapi' in doc;
+    } catch {
+      // not parseable — not OpenAPI
+    }
+    if (isOpenApi) return result;
+    await this.diagnoseOldServer();
+    const server = this.serverVersion ? `server is ${this.serverVersion}` : 'server version unknown';
+    throw new Error(`format: openapi needs Sanshain Service 2.4.0 or later (${server})`);
   }
 
   private async toRequireResult(response: AxiosResponse): Promise<RequireResult> {

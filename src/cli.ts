@@ -280,7 +280,7 @@ program
           if (req.endpoints.length === 1) {
             // Single endpoint require
             const endpoint = req.endpoints[0];
-            const cacheKey = SanshainCache.requireKey(req.serviceName, req.version, endpoint.method, endpoint.path);
+            const cacheKey = SanshainCache.requireKey(req.serviceName, req.version, endpoint.method, endpoint.path, req.format);
             const cachedEntry = cache.getRequireEntry(cacheKey);
             const cachedEtag = cachedEntry?.etag;
 
@@ -293,7 +293,8 @@ program
               options.dryRun,
               req.apiType,
               cachedEtag,
-              stream
+              stream,
+              req.format
             );
 
             if (result.notModified) {
@@ -312,7 +313,7 @@ program
             }
           } else {
             // Bundle require
-            const cacheKey = SanshainCache.requireBundleKey(req.serviceName, req.version);
+            const cacheKey = SanshainCache.requireBundleKey(req.serviceName, req.version, req.format);
             const cachedEntry = cache.getRequireEntry(cacheKey);
             const cachedEtag = cachedEntry?.etag;
 
@@ -326,7 +327,7 @@ program
               dry_run: options.dryRun,
               api_type: req.apiType,
               ...stream
-            }, config.compression, cachedEtag);
+            }, config.compression, cachedEtag, req.format);
 
             if (result.notModified) {
               console.log(`⏭ ${req.serviceName} spec unchanged (304), skipping code generation.`);

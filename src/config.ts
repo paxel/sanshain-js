@@ -11,6 +11,8 @@ export interface EndpointConfig {
 export interface RequireConfig {
   serviceName: string;
   apiType?: string;
+  /** Only 'openapi', only with apiType asyncapi: the channel rendered as OpenAPI. */
+  format?: 'openapi';
   version: string;
   outputDirectory: string;
   endpoints: EndpointConfig[];
@@ -133,7 +135,7 @@ const KNOWN_TOP = new Set([
   'insecure', 'combine', 'catalogInfo', 'provide', 'provides', 'requires'
 ]);
 const KNOWN_PROVIDE = new Set(['file', 'apiType', 'retired', 'openApiFile', 'asyncApiFile', 'protoFile', 'combine']);
-const KNOWN_REQUIRE = new Set(['serviceName', 'apiType', 'version', 'outputDirectory', 'endpoints']);
+const KNOWN_REQUIRE = new Set(['serviceName', 'apiType', 'version', 'outputDirectory', 'endpoints', 'format']);
 const KNOWN_ENDPOINT = new Set(['method', 'path']);
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -322,6 +324,12 @@ function validateConfig(config: any): void {
         throw new Error(`Missing serviceName in requires[${index}]`);
       }
       const context = `requires[${index}] (${req.serviceName})`;
+      if (req.format !== undefined && (req.format !== 'openapi' || req.apiType !== 'asyncapi')) {
+        throw new Error(
+          `${context}: format '${req.format}' with apiType '${req.apiType ?? 'openapi'}' is not supported — ` +
+            "the only combination is 'format: openapi' with 'apiType: asyncapi'"
+        );
+      }
       if (req.version === undefined || req.version === null || req.version === '') {
         throw new Error(
           `${context}: missing 'version' — Sanshain 2.0 pins exact versions; add e.g. version: 1.2.0 (list available: GET /producers/${req.serviceName}/versions)`

@@ -12,7 +12,7 @@ Sanshain (Japanese for "Sunshine") is a specialized REST service designed to man
 - **Consumers pin exact versions.** Every `requires` entry carries a `version`; there is no fallback and nothing waits.
 - **Stability is a switch, not git magic.** Every provide is a `snapshot` unless you explicitly pass `--ga` (or set `SANSHAIN_GA=true`).
 
-`sanshain catalog` needs **Sanshain Service 2.4.0** or later; all other commands work with any 2.x service.
+`sanshain catalog` and `format: openapi` on a require need **Sanshain Service 2.4.0** or later; everything else works with any 2.x service.
 
 If you point this client at a pre-2.0 Sanshain server, it will detect that (one lazy `GET /version` after a failure) and tell you to upgrade the server.
 
@@ -84,6 +84,31 @@ Any other field the CLI does not know — a typo such as `catalogInf` or `requir
 ```
 
 The message comes right after the removed-field checks, before any other validation, so it also shows when a typo leads to a follow-up error (such as a missing `version`). With `strict` on, the same message ends in `rejected (strict)` and the command fails, even under best-effort. Fields that other Sanshain clients support (`insecure`, `combine`) are accepted silently.
+
+### AsyncAPI as OpenAPI (`format`)
+
+A `requires` entry with `apiType: asyncapi` may add `format: openapi` to receive the pinned channels rendered as an OpenAPI document, e.g. for an OpenAPI code generator. It is the only supported combination; any other `format` value, or `format` with another `apiType`, is a configuration error. The file keeps its usual name (`<serviceName>.yaml`, or `<serviceName>_bundle.yaml` for several endpoints). To get both formats, list the entry twice with different `outputDirectory` values:
+
+```yaml
+requires:
+  - serviceName: notifier
+    apiType: asyncapi
+    version: 1.2.0
+    outputDirectory: src/generated/notifier
+    endpoints:
+      - method: SUB
+        path: user/signup
+  - serviceName: notifier
+    apiType: asyncapi
+    format: openapi
+    version: 1.2.0
+    outputDirectory: src/generated/notifier-openapi
+    endpoints:
+      - method: SUB
+        path: user/signup
+```
+
+`format: openapi` needs Sanshain Service 2.4.0 or later. An older service ignores the request and answers AsyncAPI; the CLI detects that, writes nothing, and fails with `format: openapi needs Sanshain Service 2.4.0 or later (server is <version>)` (a warning under best-effort).
 
 ### Environment Variable Overrides
 

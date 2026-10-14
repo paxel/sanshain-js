@@ -561,3 +561,167 @@ describe('no provide skip, no dry-run caching', () => {
     expect(second.out).toContain('unchanged (304)');
   });
 });
+
+describe('format: openapi on asyncapi requires', () => {
+  const OPENAPI = 'openapi: 3.0.3\npaths: {}\n';
+  const ASYNCAPI = 'asyncapi: 2.6.0\nchannels: {}\n';
+  const entry = (extra: string, endpoints = 1) =>
+    [
+      'sanshainUrl: http://localhost:3000',
+      'serviceName: svc',
+      'requires:',
+      '  - serviceName: events',
+      '    version: 1.0.0',
+      '    outputDirectory: gen',
+      extra,
+      '    endpoints:',
+      ...Array.from({ length: endpoints }, (_, i) => `      - method: SUB\n        path: user/signup${i}`),
+      ''
+    ]
+      .filter((line) => line !== '')
+      .join('\n') + '\n';
+  const answer = (body: string, etag?: string) => ({
+    status: 200,
+    data: Buffer.from(body),
+    headers: etag ? { etag } : {}
+  });
+  const output = (name: string) => path.join(projectDir, 'gen', name);
+
+  it('the single-endpoint call carries format=openapi and writes the usual file', async () => {
+    const config = writeProject(entry('    apiType: asyncapi\n    format: openapi'));
+
+    const run = await runCli(['-c', config, 'require'], (axios) => axios.get.mockResolvedValue(answer(OPENAPI)));
+
+    expect(run.exitCode).toBeUndefined();
+    expect(run.err).not.toContain('O_o');
+    expect(run.axios.get.mock.calls[0][0]).toBe('/require/asyncapi');
+    expect(run.axios.get.mock.calls[0][1].params.format).toBe('openapi');
+    expect(fs.readFileSync(output('events.yaml'), 'utf8')).toBe(OPENAPI);
+  });
+
+  it('the bundle call carries format=openapi as a query parameter', async () => {
+    const config = writeProject(entry('    apiType: asyncapi\n    format: openapi', 2));
+
+    const run = await runCli(['-c', config, 'require'], (axios) => axios.post.mockResolvedValue(answer(OPENAPI)));
+
+    expect(run.exitCode).toBeUndefined();
+    const [url, body, options] = run.axios.post.mock.calls[0];
+    expect(url).toBe('/require-bundle');
+    expect(options.params).toEqual({ format: 'openapi' });
+    expect(body).not.toHaveProperty('format');
+    expect(fs.readFileSync(output('events_bundle.yaml'), 'utf8')).toBe(OPENAPI);
+  });
+
+  it('without format nothing is sent', async () => {
+    const single = writeProject(entry('    apiType: asyncapi'));
+    const run = await runCli(['-c', single, 'require'], (axios) => axios.get.mockResolvedValue(answer(ASYNCAPI)));
+    expect(run.exitCode).toBeUndefined();
+    expect(run.axios.get.mock.calls[0][1].params).not.toHaveProperty('format');
+
+    const bundle = writeProject(entry('    apiType: asyncapi', 2));
+    const bundleRun = await runCli(['-c', bundle, 'require'], (axios) => axios.post.mockResolvedValue(answer(ASYNCAPI)));
+    expect(bundleRun.exitCode).toBeUndefined();
+    expect(bundleRun.axios.post.mock.calls[0][2]).not.toHaveProperty('params');
+  });
+
+  it('format with another apiType is rejected before any call', async () => {
+    const config = writeProject(entry('    apiType: openapi\n    format: openapi'));
+
+    const run = await runCli(['-c', config, 'require']);
+
+    expect(run.exitCode).toBe(1);
+    expect(run.err).toContain("requires[0] (events): format 'openapi' with apiType 'openapi' is not supported");
+    expect(run.err).toContain("'format: openapi' with 'apiType: asyncapi'");
+    expect(run.axios.get).not.toHaveBeenCalled();
+    expect(run.axios.post).not.toHaveBeenCalled();
+  });
+
+  it('format without apiType is rejected too', async () => {
+    const config = writeProject(entry('    format: openapi'));
+    const run = await runCli(['-c', config, 'require']);
+    expect(run.exitCode).toBe(1);
+    expect(run.err).toContain("requires[0] (events): format 'openapi' with apiType 'openapi' is not supported");
+  });
+
+  it('an unknown format value is rejected before any call', async () => {
+    const config = writeProject(entry('    apiType: asyncapi\n    format: proto'));
+
+    const run = await runCli(['-c', config, 'require']);
+
+    expect(run.exitCode).toBe(1);
+    expect(run.err).toContain("requires[0] (events): format 'proto' with apiType 'asyncapi' is not supported");
+    expect(run.axios.get).not.toHaveBeenCalled();
+  });
+
+  it('a non-OpenAPI answer means the service is too old, naming its version', async () => {
+    const config = writeProject(entry('    apiType: asyncapi\n    format: openapi'));
+
+    const run = await runCli(['-c', config, 'require'], (axios) =>
+      axios.get.mockImplementation(async (url: string) =>
+        url === '/version'
+          ? { status: 200, data: JSON.stringify({ version: '2.3.0' }), headers: {} }
+          : answer(ASYNCAPI)
+      )
+    );
+
+    expect(run.exitCode).toBe(1);
+    expect(run.err).toContain('format: openapi needs Sanshain Service 2.4.0 or later (server is 2.3.0)');
+    expect(fs.existsSync(output('events.yaml'))).toBe(false);
+  });
+
+  it('a non-OpenAPI answer with an unknown server version says so', async () => {
+    const config = writeProject(entry('    apiType: asyncapi\n    format: openapi', 2));
+
+    const run = await runCli(['-c', config, 'require'], (axios) => {
+      axios.post.mockResolvedValue(answer(ASYNCAPI));
+      axios.get.mockRejectedValue(new Error('connection refused'));
+    });
+
+    expect(run.exitCode).toBe(1);
+    expect(run.err).toContain('format: openapi needs Sanshain Service 2.4.0 or later (server version unknown)');
+    expect(fs.existsSync(output('events_bundle.yaml'))).toBe(false);
+  });
+
+  it('best-effort turns the non-OpenAPI answer into a warning and writes nothing', async () => {
+    const config = writeProject(entry('    apiType: asyncapi\n    format: openapi'));
+
+    const run = await runCli(['-c', config, '--best-effort', 'require'], (axios) =>
+      axios.get.mockImplementation(async (url: string) =>
+        url === '/version'
+          ? { status: 200, data: JSON.stringify({ version: '2.3.0' }), headers: {} }
+          : answer(ASYNCAPI)
+      )
+    );
+
+    expect(run.exitCode).toBeUndefined();
+    expect(run.err).toContain('format: openapi needs Sanshain Service 2.4.0 or later (server is 2.3.0)');
+    expect(run.err).toContain('Continuing (best effort)');
+    expect(fs.existsSync(output('events.yaml'))).toBe(false);
+  });
+
+  it('the ETag is kept per format', async () => {
+    const withFormat = entry('    apiType: asyncapi\n    format: openapi');
+    const without = entry('    apiType: asyncapi');
+    const sent = (run: RunResult) => run.axios.get.mock.calls[0][1].headers['If-None-Match'];
+
+    const first = await runCli(['-c', writeProject(withFormat), 'require'], (axios) =>
+      axios.get.mockResolvedValue(answer(OPENAPI, '"openapi-etag"'))
+    );
+    expect(sent(first)).toBeUndefined();
+
+    const plain = await runCli(['-c', writeProject(without), 'require'], (axios) =>
+      axios.get.mockResolvedValue(answer(ASYNCAPI, '"asyncapi-etag"'))
+    );
+    expect(sent(plain)).toBeUndefined();
+
+    const again = await runCli(['-c', writeProject(withFormat), 'require'], (axios) =>
+      axios.get.mockResolvedValue({ status: 304, data: Buffer.from(''), headers: {} })
+    );
+    expect(sent(again)).toBe('"openapi-etag"');
+
+    const plainAgain = await runCli(['-c', writeProject(without), 'require'], (axios) =>
+      axios.get.mockResolvedValue({ status: 304, data: Buffer.from(''), headers: {} })
+    );
+    expect(sent(plainAgain)).toBe('"asyncapi-etag"');
+  });
+});
