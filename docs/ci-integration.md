@@ -93,7 +93,9 @@ npx sanshain catalog                         # feature branches: dev graph
 SANSHAIN_TRUNK=true npx sanshain catalog     # trunk pipeline: main graph as well
 ```
 
-A `400` fails the build when the file's Component `metadata.name` differs from `serviceName`; without `catalogInfo` the step only warns.
+A file Sanshain cannot read as this project's Component (usually a `metadata.name` that differs from `serviceName`) records nothing; the step prints Sanshain's reason as a warning and passes, unless `SANSHAIN_STRICT=true`. Without `catalogInfo` the step only warns.
+
+Every warning Sanshain sends (the `Sanshain-Warning` header, e.g. for an unknown `SANSHAIN_TAG`) is printed in the build log; with `SANSHAIN_STRICT=true` it fails the step.
 
 ## 4. Environment Variables
 

@@ -1,9 +1,10 @@
 import { Command } from 'commander';
-import { UnknownFieldsError, configBaseDir, envFlag, loadConfig, resolveStability, resolveStream } from './config';
+import { UnknownFieldsError, configBaseDir, envFlag, loadConfig, resolveStability, resolveStreamWithWarning } from './config';
 import {
-  CatalogRejectedError,
+  CatalogPushResponse,
   SanshainClient,
   ProvideResponseBody,
+  Stream,
   VersionConflictError,
   describeSubscription,
   isAdvisory
@@ -13,6 +14,54 @@ import fs from 'fs';
 import path from 'path';
 
 export const program = new Command();
+
+/** A failure strict mode demands. Best effort never softens it. */
+export class StrictFailure extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'StrictFailure';
+  }
+}
+
+/**
+ * Print each warning Sanshain sent with a call. Under strict the first one
+ * fails the command — after printing the call's own error, if it had one.
+ */
+function reportWarnings(warnings: string[], strict: boolean, error?: unknown): void {
+  for (const warning of warnings) {
+    console.warn(`⚠ ${warning}`);
+  }
+  if (strict && warnings.length > 0) {
+    if (error) console.error((error as Error).message ?? String(error));
+    throw new StrictFailure(`strict: Sanshain warned: ${warnings[0]}`);
+  }
+}
+
+/** Run one Sanshain call and report the warnings it brought, whether it succeeded or not. */
+async function checked<T>(client: SanshainClient, strict: boolean, call: () => Promise<T>): Promise<T> {
+  let result: T;
+  try {
+    result = await call();
+  } catch (error) {
+    reportWarnings(client.takeWarnings(), strict, error);
+    throw error;
+  }
+  reportWarnings(client.takeWarnings(), strict);
+  return result;
+}
+
+/**
+ * The build's stream. Both trunk and a tag is no error: the build is recorded
+ * in neither, with a warning — and under strict, a failure before any request.
+ */
+function streamFor(strict: boolean, trunkFlag?: boolean, tagFlag?: string): Stream {
+  const { stream, warning } = resolveStreamWithWarning(trunkFlag, tagFlag);
+  if (warning) {
+    console.warn(`⚠ ${warning}`);
+    if (strict) throw new StrictFailure(`strict: ${warning}`);
+  }
+  return stream;
+}
 
 program
   .name('sanshain')
@@ -58,9 +107,9 @@ program
       const token = globalOptions.token || process.env.SANSHAIN_TOKEN;
       const insecure = globalOptions.insecure || false;
       const stability = resolveStability(globalOptions.ga);
-      const stream = resolveStream(globalOptions.trunk, globalOptions.tag);
 
       const strict = config.strict || false;
+      const stream = streamFor(strict, globalOptions.trunk, globalOptions.tag);
 
       if (!config.serviceName) {
         if (strict) {
@@ -101,29 +150,29 @@ program
           let response: ProvideResponseBody | null = null;
           try {
             if (effectiveApiType === 'openapi') {
-              response = await client.provide({
+              response = await checked(client, strict, () => client.provide({
                 producername: config.serviceName,
                 openapi_yaml: content,
                 stability,
                 dry_run: options.dryRun,
                 ...stream
-              }, config.compression);
+              }, config.compression));
             } else if (effectiveApiType === 'asyncapi') {
-              response = await client.provideAsyncApi({
+              response = await checked(client, strict, () => client.provideAsyncApi({
                 producername: config.serviceName,
                 asyncapi_yaml: content,
                 stability,
                 dry_run: options.dryRun,
                 ...stream
-              }, config.compression);
+              }, config.compression));
             } else if (effectiveApiType === 'proto' || effectiveApiType === 'grpc') {
-              response = await client.provideProto({
+              response = await checked(client, strict, () => client.provideProto({
                 producername: config.serviceName,
                 proto_content: content,
                 stability,
                 dry_run: options.dryRun,
                 ...stream
-              }, config.compression);
+              }, config.compression));
             }
           } catch (error: any) {
             if (error instanceof VersionConflictError) {
@@ -167,7 +216,7 @@ program
       const retireFamily = async (apiType?: string) => {
         const family = apiType || 'openapi';
         console.log(`Retiring ${family} for ${config.serviceName}...`);
-        const shed = await client.retire(config.serviceName, family, options.dryRun);
+        const shed = await checked(client, strict, () => client.retire(config.serviceName, family, options.dryRun));
         const cleared = shed?.tag_cleared ? `: cleared the '${shed.tag_cleared}' capability` : '';
         console.log(
           `✓ Retired${cleared}, closed ${shed?.trunk_pins_closed ?? 0} trunk pin(s), released ` +
@@ -200,8 +249,8 @@ program
         console.log('Successfully provided spec(s).');
       }
     } catch (error: any) {
-      console.error(`Error providing spec: ${error.message}`);
-      if (!(config.bestEffort || false)) {
+      console.error(error instanceof StrictFailure ? error.message : `Error providing spec: ${error.message}`);
+      if (!(config.bestEffort || false) || error instanceof StrictFailure) {
         process.exit(1);
       } else {
         console.warn('Continuing (best effort)');
@@ -261,7 +310,7 @@ program
 
       const client = new SanshainClient(url, token, insecure);
       const cache = new SanshainCache();
-      const stream = resolveStream(globalOptions.trunk, globalOptions.tag);
+      const stream = streamFor(strict, globalOptions.trunk, globalOptions.tag);
       const baseDir = configBaseDir(globalOptions.config);
 
       for (const req of config.requires) {
@@ -284,7 +333,7 @@ program
             const cachedEntry = cache.getRequireEntry(cacheKey);
             const cachedEtag = cachedEntry?.etag;
 
-            const result = await client.require(
+            const result = await checked(client, strict, () => client.require(
               config.serviceName,
               req.serviceName,
               req.version,
@@ -295,7 +344,7 @@ program
               cachedEtag,
               stream,
               req.format
-            );
+            ));
 
             if (result.notModified) {
               console.log(`⏭ ${req.serviceName} spec unchanged (304), skipping code generation.`);
@@ -319,7 +368,7 @@ program
 
             // The bundle takes the stream in the body — the server's bundle
             // handler reads no query parameters.
-            const result = await client.requireBundle({
+            const result = await checked(client, strict, () => client.requireBundle({
               consumername: config.serviceName,
               producername: req.serviceName,
               version: req.version,
@@ -327,7 +376,7 @@ program
               dry_run: options.dryRun,
               api_type: req.apiType,
               ...stream
-            }, config.compression, cachedEtag, req.format);
+            }, config.compression, cachedEtag, req.format));
 
             if (result.notModified) {
               console.log(`⏭ ${req.serviceName} spec unchanged (304), skipping code generation.`);
@@ -345,8 +394,12 @@ program
             }
           }
         } catch (error: any) {
-          console.error(`Error requiring ${req.serviceName} ${req.version}: ${error.message}`);
-          if (!bestEffort) {
+          console.error(
+            error instanceof StrictFailure
+              ? error.message
+              : `Error requiring ${req.serviceName} ${req.version}: ${error.message}`
+          );
+          if (!bestEffort || error instanceof StrictFailure) {
             process.exit(1);
           } else {
             console.warn('Continuing (best effort)');
@@ -354,8 +407,8 @@ program
         }
       }
     } catch (error: any) {
-      console.error(`Error during require: ${error.message}`);
-      if (!(config.bestEffort || false)) {
+      console.error(error instanceof StrictFailure ? error.message : `Error during require: ${error.message}`);
+      if (!(config.bestEffort || false) || error instanceof StrictFailure) {
         process.exit(1);
       } else {
         console.warn('Continuing (best effort)');
@@ -410,7 +463,7 @@ program
         return;
       }
 
-      const stream = resolveStream(globalOptions.trunk, globalOptions.tag);
+      const stream = streamFor(strict, globalOptions.trunk, globalOptions.tag);
       const catalogPath = path.resolve(configBaseDir(globalOptions.config), config.catalogInfo);
       let content: string;
       try {
@@ -421,27 +474,31 @@ program
 
       const client = new SanshainClient(url, token, insecure);
       console.log(`Pushing catalog ${config.catalogInfo} for ${config.serviceName} to ${url}...`);
+      let pushed: CatalogPushResponse | undefined;
+      let failure: unknown;
       try {
-        const recorded = await client.pushCatalog(config.serviceName, content, stream, config.compression);
-        const resources = recorded.resources || [];
-        console.log(
-          `Catalog recorded for ${recorded.system} (${recorded.trunk ? 'main+dev' : 'dev'}): ${resources.length} resources`
-        );
-        for (const resource of resources) {
-          console.log(`  ${resource}`);
-        }
-      } catch (error: any) {
-        if (error instanceof CatalogRejectedError) {
-          throw new Error(
-            `Sanshain rejected ${catalogPath}: ${error.serverMessage}. ` +
-              `The Component's metadata.name must equal serviceName '${config.serviceName}'.`
-          );
-        }
-        throw error;
+        pushed = await client.pushCatalog(config.serviceName, content, stream, config.compression);
+      } catch (error) {
+        failure = error;
+      }
+      const warnings = client.takeWarnings();
+      // The header names the reason; a service sending none still warns.
+      if (pushed && !pushed.recorded && warnings.length === 0) {
+        warnings.push(`Sanshain did not record ${catalogPath}`);
+      }
+      reportWarnings(warnings, strict, failure);
+      if (failure) throw failure;
+      if (!pushed!.recorded) return;
+      const resources = pushed!.resources || [];
+      console.log(
+        `Catalog recorded for ${pushed!.system} (${pushed!.trunk ? 'main+dev' : 'dev'}): ${resources.length} resources`
+      );
+      for (const resource of resources) {
+        console.log(`  ${resource}`);
       }
     } catch (error: any) {
-      console.error(`Error pushing catalog: ${error.message}`);
-      if (!(config.bestEffort || false)) {
+      console.error(error instanceof StrictFailure ? error.message : `Error pushing catalog: ${error.message}`);
+      if (!(config.bestEffort || false) || error instanceof StrictFailure) {
         process.exit(1);
       } else {
         console.warn('Continuing (best effort)');

@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { SanshainClient, VersionConflictError, UnknownVersionError, AbsentEndpointError } from '../src/api';
+import { SanshainClient, VersionConflictError, UnknownVersionError, AbsentEndpointError, warningsOf } from '../src/api';
 
 jest.mock('axios');
 const mockedAxios = axios as jest.Mocked<typeof axios>;
@@ -171,5 +171,70 @@ describe('Sanshain API Client', () => {
       expect(error.message).toContain('Absent endpoint (410)');
       expect(error.message).toContain('deliberately does not include');
     });
+  });
+});
+
+describe('Sanshain-Warning collection', () => {
+  it('reads the separate header lines from the raw response, never splitting a joined value', () => {
+    expect(warningsOf({ headers: {} })).toEqual([]);
+    expect(warningsOf({ headers: { 'sanshain-warning': 'a, b' } })).toEqual(['a, b']);
+    expect(warningsOf({ headers: { 'sanshain-warning': ['a, b', 'c'] } })).toEqual(['a, b', 'c']);
+    expect(
+      warningsOf({
+        headers: { 'sanshain-warning': 'a, b, c' },
+        request: { res: { headersDistinct: { 'sanshain-warning': ['a, b', 'c'] } } }
+      })
+    ).toEqual(['a, b', 'c']);
+  });
+
+  it('collects from success and error responses, and takeWarnings forgets them', async () => {
+    jest.clearAllMocks();
+    mockedAxios.create.mockReturnValue(mockedAxios as any);
+    const client = new SanshainClient('http://localhost:3000');
+    mockedAxios.get.mockResolvedValueOnce({ status: 200, data: 'x', headers: { 'sanshain-warning': 'one' } });
+    await client.require('c', 'p', '1.0.0', '/x', 'GET');
+    expect(client.takeWarnings()).toEqual(['one']);
+    expect(client.takeWarnings()).toEqual([]);
+
+    mockedAxios.post.mockRejectedValueOnce({
+      response: { status: 500, data: '{}', headers: { 'sanshain-warning': 'two' } }
+    });
+    mockedAxios.get.mockResolvedValueOnce({ status: 200, data: JSON.stringify({ version: '2.4.0' }), headers: {} });
+    await expect(client.provide({ producername: 'p', openapi_yaml: 'x', stability: 'snapshot' })).rejects.toThrow();
+    expect(client.takeWarnings()).toEqual(['two']);
+  });
+
+  it('a catalog without recorded counts as recorded', async () => {
+    jest.clearAllMocks();
+    mockedAxios.create.mockReturnValue(mockedAxios as any);
+    const client = new SanshainClient('http://localhost:3000');
+    mockedAxios.put.mockResolvedValueOnce({ status: 200, data: JSON.stringify({ system: 's', trunk: false, resources: [] }), headers: {} });
+    expect((await client.pushCatalog('s', 'x')).recorded).toBe(true);
+    mockedAxios.put.mockResolvedValueOnce({
+      status: 200,
+      data: JSON.stringify({ system: 's', trunk: false, resources: [], recorded: false }),
+      headers: {}
+    });
+    expect((await client.pushCatalog('s', 'x')).recorded).toBe(false);
+  });
+
+  it('over real HTTP, repeated header lines arrive as separate warnings', async () => {
+    const http = require('http');
+    const realAxios = jest.requireActual('axios');
+    const server = http.createServer((req: any, res: any) => {
+      res.setHeader('Sanshain-Warning', ['first, with a comma', 'second']);
+      res.statusCode = req.url === '/provide' ? 202 : 404;
+      res.end(JSON.stringify({ version: '1.0.0', stability: 'snapshot', content_hash: 'h', changes: {} }));
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    try {
+      mockedAxios.create.mockImplementation((config: any) => realAxios.create(config));
+      const client = new SanshainClient(`http://127.0.0.1:${server.address().port}`);
+      await client.provide({ producername: 'p', openapi_yaml: 'x', stability: 'snapshot', tag: 'R9' });
+      expect(client.takeWarnings()).toEqual(['first, with a comma', 'second']);
+    } finally {
+      mockedAxios.create.mockReset();
+      await new Promise((resolve) => server.close(resolve));
+    }
   });
 });

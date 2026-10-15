@@ -5,7 +5,7 @@ import {
   describeSubscription,
   isAdvisory
 } from '../src/api';
-import { resolveStream } from '../src/config';
+import { resolveStream, resolveStreamWithWarning } from '../src/config';
 import { normalizeLineEndings } from '../src/utils';
 
 jest.mock('axios');
@@ -40,15 +40,18 @@ describe('resolveStream', () => {
     expect(resolveStream(false, 'from-flag')).toEqual({ tag: 'from-flag' });
   });
 
-  it('refuses trunk and tag together, locally', () => {
-    // The server answers 400 for both; naming the misconfiguration here beats
-    // spending a round trip on it.
+  it('trunk and tag together give neither, with a warning instead of an error', () => {
+    // The graph never fails a build: the build is recorded in neither, and
+    // the CLI prints the warning (strict makes it fatal).
     delete process.env.SANSHAIN_TRUNK;
     delete process.env.SANSHAIN_TAG;
-    expect(() => resolveStream(true, 'R')).toThrow(/never both/);
-    expect(() => resolveStream(true, 'R')).toThrow(/'R'/);
+    const warning = 'trunk and tag are mutually exclusive - this build is recorded in neither';
+    expect(resolveStreamWithWarning(true, 'R')).toEqual({ stream: {}, warning });
+    expect(resolveStream(true, 'R')).toEqual({});
     process.env.SANSHAIN_TAG = 'R';
-    expect(() => resolveStream(true)).toThrow(/never both/);
+    expect(resolveStreamWithWarning(true)).toEqual({ stream: {}, warning });
+    delete process.env.SANSHAIN_TAG;
+    expect(resolveStreamWithWarning(true)).toEqual({ stream: { trunk: true } });
   });
 });
 

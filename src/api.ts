@@ -9,8 +9,8 @@ export type Stability = 'snapshot' | 'ga';
  * (tag), or neither. A property of the invocation, never of sanshain.yaml —
  * the same checkout is built by trunk CI and on a developer's laptop, and the
  * trunk pin store is last-writer-wins, so inferring the stream would let a
- * local build overwrite what CI recorded. Mutually exclusive: the server
- * answers 400 for a call carrying both.
+ * local build overwrite what CI recorded. Mutually exclusive: a call carrying
+ * both is recorded in neither, with a `Sanshain-Warning`.
  */
 export interface Stream {
   trunk?: boolean;
@@ -175,17 +175,26 @@ export interface CatalogPushResponse {
   system: string;
   trunk: boolean;
   resources: string[];
+  /**
+   * False when Sanshain could not read the file and recorded nothing (the
+   * previous periphery stays); the reason rides a `Sanshain-Warning` header.
+   * Absent from an older 2.4.0 pre-release service, which counts as true.
+   */
+  recorded?: boolean;
 }
 
-/** 400 on a catalog push — the file is not readable as this system's Component. */
-export class CatalogRejectedError extends Error {
-  serverMessage: string;
-
-  constructor(serverMessage: string) {
-    super(serverMessage);
-    this.name = 'CatalogRejectedError';
-    this.serverMessage = serverMessage;
-  }
+/**
+ * The `Sanshain-Warning` values of a response, one per header line. Node
+ * joins repeated headers with ", " in `headers`, and a warning may itself
+ * contain a comma, so the separate lines are read from the raw response when
+ * it is there; a joined value is never split.
+ */
+export function warningsOf(response: any): string[] {
+  const distinct = response?.request?.res?.headersDistinct?.['sanshain-warning'];
+  if (Array.isArray(distinct)) return distinct.map(String);
+  const value = response?.headers?.['sanshain-warning'];
+  if (value === undefined || value === null) return [];
+  return Array.isArray(value) ? value.map(String) : [String(value)];
 }
 
 interface ErrorBody {
@@ -207,6 +216,7 @@ export class SanshainClient {
   private serverVersionChecked = false;
   private oldServerMessage: string | null = null;
   private serverVersion: string | null = null;
+  private warnings: string[] = [];
 
   constructor(baseUrl: string, token?: string, insecure: boolean = false) {
     this.token = token;
@@ -233,6 +243,22 @@ export class SanshainClient {
         rejectUnauthorized: false
       });
     }
+  }
+
+  /**
+   * The `Sanshain-Warning`s received since the last call, in order — for
+   * error responses too — and forgets them. Sanshain sends one where it
+   * did not record a call in a graph (an unknown tag, an unreadable catalog
+   * file); the call itself still succeeded.
+   */
+  takeWarnings(): string[] {
+    const taken = this.warnings;
+    this.warnings = [];
+    return taken;
+  }
+
+  private collectWarnings(response: any): void {
+    this.warnings.push(...warningsOf(response));
   }
 
   private async decodeBody(response: { data: any; headers?: any }): Promise<string> {
@@ -377,7 +403,9 @@ export class SanshainClient {
       response = await this.axiosInstance.post(url, payload, {
         headers: { 'Content-Type': 'application/json' }
       });
+      this.collectWarnings(response);
     } catch (error: any) {
+      this.collectWarnings(error?.response);
       throw await this.translateError(error);
     }
     try {
@@ -411,20 +439,18 @@ export class SanshainClient {
     let response: AxiosResponse;
     try {
       response = await this.axiosInstance.put(`/catalog/${encodeURIComponent(systemname)}`, data, { headers });
+      this.collectWarnings(response);
     } catch (error: any) {
-      const status: number | undefined = error?.response?.status;
-      if (status === 400) {
-        const bodyText = await this.decodeBody(error.response);
-        throw new CatalogRejectedError(this.parseErrorBody(bodyText).error || sanitize(bodyText));
-      }
-      if (status === 404) {
+      this.collectWarnings(error?.response);
+      if (error?.response?.status === 404) {
         await this.diagnoseOldServer();
         const server = this.serverVersion ? `server is ${this.serverVersion}` : 'server version unknown';
         throw new Error(`sanshain catalog needs Sanshain Service 2.4.0 or later (${server})`);
       }
       throw await this.translateError(error);
     }
-    return JSON.parse(await this.decodeBody(response)) as CatalogPushResponse;
+    const pushed = JSON.parse(await this.decodeBody(response)) as CatalogPushResponse;
+    return { ...pushed, recorded: pushed.recorded !== false };
   }
 
   private async postProvide(url: string, payload: any, compression: boolean = false): Promise<ProvideResponseBody | null> {
@@ -442,7 +468,9 @@ export class SanshainClient {
     let response: AxiosResponse;
     try {
       response = await this.axiosInstance.post(url, data, { headers });
+      this.collectWarnings(response);
     } catch (error: any) {
+      this.collectWarnings(error?.response);
       throw await this.translateError(error);
     }
     try {
@@ -501,7 +529,9 @@ export class SanshainClient {
         responseType: 'arraybuffer',
         validateStatus: (status) => status === 200 || status === 304
       });
+      this.collectWarnings(response);
     } catch (error: any) {
+      this.collectWarnings(error?.response);
       // A service older than 2.4.0 refuses the unknown query field with 400.
       if (format && error?.response?.status === 400) {
         const bodyText = await this.decodeBody(error.response);
@@ -558,7 +588,9 @@ export class SanshainClient {
         responseType: 'arraybuffer',
         validateStatus: (status) => status === 200 || status === 304
       });
+      this.collectWarnings(response);
     } catch (error: any) {
+      this.collectWarnings(error?.response);
       throw await this.translateError(error);
     }
 

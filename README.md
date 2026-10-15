@@ -149,8 +149,12 @@ sanshain provide --trunk        # trunk CI: maintains the main graph (also SANSH
 sanshain provide --tag R1       # release/hotfix pipeline: updates that sanshain-branch (also SANSHAIN_TAG)
 ```
 
-The same flags apply to `require` — trunk pins feed the main graph. Declaring both fails before
-any request is sent; an unknown tag answers `404` (a releaser must create the branch first).
+The same flags apply to `require` — trunk pins feed the main graph. Declaring both records the
+build in neither graph: the CLI warns
+`trunk and tag are mutually exclusive - this build is recorded in neither` and sends neither
+(under strict it fails before any request). An unknown tag is not created and not an error: the
+call succeeds, recorded only in the dev graph, and Sanshain sends a warning (see
+[Warnings](#warnings)); a releaser must create the branch first.
 
 ## Retiring a protocol
 
@@ -227,7 +231,7 @@ Catalog recorded for orders-service (main+dev): 1 resources
 ```
 
 - Without `catalogInfo` the command warns `No catalogInfo in sanshain.yaml - skipping catalog.` and exits 0 (fails under strict).
-- A `400` means Sanshain could not read the file as this project's Component — usually a `metadata.name` that is not the `serviceName`. The build fails so the mismatch gets fixed.
+- A file Sanshain cannot read as this project's Component — usually a `metadata.name` that is not the `serviceName` — records nothing and keeps the previous periphery. The CLI prints Sanshain's reason as a warning and exits 0 (fails under strict).
 - A `404` means the service is older than 2.4.0; the CLI checks `GET /version` and names it.
 - Under best-effort every failure is a warning and the command exits 0.
 
@@ -304,6 +308,16 @@ When strict mode is enabled:
 - No `requires` configured → exit with error
 - No `catalogInfo` configured (for `sanshain catalog`, which checks only `serviceName` and `catalogInfo`) → exit with error
 - Unknown fields in `sanshain.yaml` → exit with error (best-effort does not soften this)
+- Any warning Sanshain sends, and declaring both trunk and a tag → exit with error (best-effort does not soften this)
+
+## Warnings
+
+The dependency graph is informational and never fails a build. Where Sanshain does not record a
+call in a graph — an unknown `--tag`, a `catalog-info.yaml` it cannot read — the call succeeds
+and Sanshain sends a `Sanshain-Warning` header. The CLI prints each one as `⚠ <text>`, for every
+command and for error responses too, and the build carries on. Under strict mode a warning fails
+the command after the call with `strict: Sanshain warned: <text>` (the first warning, if there
+are several); best-effort does not soften that.
 
 ## CI/CD Integration
 

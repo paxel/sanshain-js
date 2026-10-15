@@ -72,23 +72,27 @@ export function resolveStability(gaFlag?: boolean): Stability {
   return 'snapshot';
 }
 
+/** What a build declaring both trunk and a tag is told; it sends neither. */
+export const TRUNK_AND_TAG_WARNING = 'trunk and tag are mutually exclusive - this build is recorded in neither';
+
 /**
  * Resolve which dependency graph this build's calls belong to, preferring the
- * explicit flags over SANSHAIN_TRUNK / SANSHAIN_TAG. Declaring both throws:
- * the server would answer 400, and naming the misconfiguration locally beats
- * spending a round trip on it.
+ * explicit flags over SANSHAIN_TRUNK / SANSHAIN_TAG. Declaring both is no
+ * error: the graph is informational and never fails a build, so the build is
+ * recorded in neither and the warning says so (strict mode makes it fatal).
  */
-export function resolveStream(trunkFlag?: boolean, tagFlag?: string): Stream {
+export function resolveStreamWithWarning(trunkFlag?: boolean, tagFlag?: string): { stream: Stream; warning?: string } {
   const trunk = Boolean(trunkFlag) || envFlag('SANSHAIN_TRUNK');
   const tag = (tagFlag || process.env.SANSHAIN_TAG || '').trim() || undefined;
   if (trunk && tag) {
-    throw new Error(
-      `this build declares both trunk and tag '${tag}' — a build belongs to the trunk stream ` +
-        'or to one sanshain-branch, never both; set only one of --trunk / SANSHAIN_TRUNK and ' +
-        '--tag / SANSHAIN_TAG'
-    );
+    return { stream: {}, warning: TRUNK_AND_TAG_WARNING };
   }
-  return trunk ? { trunk: true } : tag ? { tag } : {};
+  return { stream: trunk ? { trunk: true } : tag ? { tag } : {} };
+}
+
+/** The stream alone, as resolveStreamWithWarning resolves it: both trunk and a tag give neither. */
+export function resolveStream(trunkFlag?: boolean, tagFlag?: string): Stream {
+  return resolveStreamWithWarning(trunkFlag, tagFlag).stream;
 }
 
 /**

@@ -17,7 +17,7 @@ inputs:
     required: false
     default: 'false'
   tag:
-    description: 'A sanshain-branch name for release/hotfix pipelines (maps to SANSHAIN_TAG). Mutually exclusive with trunk.'
+    description: 'A sanshain-branch name for release/hotfix pipelines (maps to SANSHAIN_TAG). Mutually exclusive with trunk: setting both records the build in neither, with a warning (fails under SANSHAIN_STRICT).'
     required: false
     default: ''
   working-directory:
