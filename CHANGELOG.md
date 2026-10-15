@@ -24,6 +24,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - A `provide --dry-run` no longer makes the following real provide skip the upload as "Spec unchanged".
 - A `require --dry-run` no longer stores the ETag, so it cannot turn the following real require into a `304` skip.
 
+### Security
+- Updated `axios` to 1.20.0 (GHSA-3w6x-2g7m-8v23, GHSA-q8qp-cvcw-x6jj, GHSA-p92q-9vqr-4j8v and further axios advisories up to 1.19.0).
+
 ---
 
 Historical changes have been moved to [OLDER_CHANGES.md](OLDER_CHANGES.md).
