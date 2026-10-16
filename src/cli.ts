@@ -66,7 +66,7 @@ function streamFor(strict: boolean, trunkFlag?: boolean, tagFlag?: string): Stre
 program
   .name('sanshain')
   .description('Sanshain CLI client for managing OpenAPI specs')
-  .version('2.4.0')
+  .version('2.5.0')
   .option('-c, --config <path>', 'path to sanshain.yaml', 'sanshain.yaml')
   .option('-u, --url <url>', 'Sanshain service URL')
   .option('-t, --token <token>', 'authentication token')
