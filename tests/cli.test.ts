@@ -126,6 +126,33 @@ describe('the origin of a provide', () => {
   });
 });
 
+describe('an older service refusing the origin', () => {
+  it('repeats the provide without it and warns', async () => {
+    const saved = { ...process.env };
+    process.env.SANSHAIN_NOTE = 'Adds users';
+    try {
+      const config = writeProject(
+        'sanshainUrl: http://localhost:3000\nserviceName: svc\nprovide:\n  file: openapi.yaml\n',
+        { 'openapi.yaml': 'openapi: 3.0.3\ninfo:\n  version: 1.0.0\n' }
+      );
+      const run = await runCli(['-c', config, 'provide'], (axios) => {
+        axios.post
+          .mockRejectedValueOnce({
+            response: { status: 422, data: 'Failed to deserialize the JSON body into the target type: unknown field `note`', headers: {} },
+          })
+          .mockResolvedValueOnce({ status: 202, data: PROVIDE_OK, headers: {} });
+      });
+      expect(run.exitCode).toBeUndefined();
+      expect(run.axios.post).toHaveBeenCalledTimes(2);
+      expect(run.axios.post.mock.calls[0][1].note).toBe('Adds users');
+      expect('note' in run.axios.post.mock.calls[1][1]).toBe(false);
+      expect(run.err).toContain('does not take the build');
+    } finally {
+      process.env = saved;
+    }
+  });
+});
+
 describe('paths relative to sanshain.yaml', () => {
   it('provide reads the spec file next to the config, not in the working directory', async () => {
     const config = writeProject(

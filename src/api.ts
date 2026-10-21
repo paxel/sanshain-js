@@ -38,6 +38,24 @@ export interface Origin {
   note?: string;
 }
 
+const ORIGIN_FIELDS = ['build_url', 'change_url', 'tickets', 'note'] as const;
+
+function hasOrigin(payload: any): boolean {
+  return ORIGIN_FIELDS.some((field) => payload && field in payload);
+}
+
+function withoutOrigin(payload: any): any {
+  const copy = { ...payload };
+  for (const field of ORIGIN_FIELDS) delete copy[field];
+  return copy;
+}
+
+/** Whether a 422 body names one of the origin fields as unknown (a service before 2.9.0). */
+export function namesOriginField(body: unknown): boolean {
+  const text = typeof body === 'string' ? body : Buffer.isBuffer(body) ? body.toString('utf8') : JSON.stringify(body ?? '');
+  return ORIGIN_FIELDS.some((field) => text.includes(`unknown field \`${field}\``));
+}
+
 export interface ProvidePayload extends Origin {
   producername: string;
   openapi_yaml: string;
@@ -485,6 +503,13 @@ export class SanshainClient {
       this.collectWarnings(response);
     } catch (error: any) {
       this.collectWarnings(error?.response);
+      // A service before 2.9.0 refuses the origin fields by name: the provide
+      // must not fail for a fact the service cannot store, so it is repeated
+      // without them.
+      if (error?.response?.status === 422 && hasOrigin(payload) && namesOriginField(error.response.data)) {
+        console.warn("⚠ Sanshain Service before 2.9.0 does not take the build's origin; providing without it");
+        return this.postProvide(url, withoutOrigin(payload), compression);
+      }
       throw await this.translateError(error);
     }
     try {
