@@ -20,6 +20,14 @@ inputs:
     description: 'A sanshain-branch name for release/hotfix pipelines (maps to SANSHAIN_TAG). Mutually exclusive with trunk: setting both records the build in neither, with a warning (fails under SANSHAIN_STRICT).'
     required: false
     default: ''
+  tickets:
+    description: 'Ticket ids this build closes, comma-separated (maps to SANSHAIN_TICKETS); stored with the version as part of its origin. The build and pull request URLs are taken from the workflow run on their own.'
+    required: false
+    default: ''
+  note:
+    description: 'One line of intent for this provide (maps to SANSHAIN_NOTE).'
+    required: false
+    default: ''
   working-directory:
     description: 'Directory where sanshain.yaml is located'
     required: false
@@ -36,5 +44,7 @@ runs:
         SANSHAIN_GA: ${{ inputs.ga }}
         SANSHAIN_TRUNK: ${{ inputs.trunk }}
         SANSHAIN_TAG: ${{ inputs.tag }}
+        SANSHAIN_TICKETS: ${{ inputs.tickets }}
+        SANSHAIN_NOTE: ${{ inputs.note }}
       run: |
         npx sanshain ${{ inputs.command }}

@@ -1,4 +1,4 @@
-import { UnknownFieldsError, envFlag, loadConfig, resolveStability, resolveStream } from '../src/config';
+import { UnknownFieldsError, envFlag, loadConfig, resolveOrigin, resolveStability, resolveStream } from '../src/config';
 import fs from 'fs';
 import path from 'path';
 
@@ -438,5 +438,62 @@ describe('unknown fields (the puzzled cat)', () => {
       ].join('\n')
     );
     expect(stderr).not.toHaveBeenCalled();
+  });
+});
+
+describe('Origin resolution (why this build provides)', () => {
+  it('knows nothing without options, SANSHAIN_* or runner variables', () => {
+    expect(resolveOrigin({}, {})).toEqual({});
+  });
+
+  it('prefers the option over SANSHAIN_* over the runner, trims and dedupes tickets', () => {
+    const env = {
+      SANSHAIN_BUILD_URL: 'https://ci/env',
+      SANSHAIN_CHANGE_URL: 'https://git/env',
+      SANSHAIN_TICKETS: 'ENV-1',
+      SANSHAIN_NOTE: 'env',
+      BUILD_URL: 'https://jenkins/7',
+    };
+    expect(
+      resolveOrigin({ buildUrl: ' https://ci/opt ', changeUrl: 'https://git/opt', tickets: 'A-1, A-2 ,A-1,', note: ' opt ' }, env),
+    ).toEqual({ build_url: 'https://ci/opt', change_url: 'https://git/opt', tickets: ['A-1', 'A-2'], note: 'opt' });
+    expect(resolveOrigin({}, env)).toEqual({
+      build_url: 'https://ci/env',
+      change_url: 'https://git/env',
+      tickets: ['ENV-1'],
+      note: 'env',
+    });
+  });
+
+  it('reads the build and change URL from GitHub Actions, GitLab CI and Jenkins', () => {
+    expect(
+      resolveOrigin({}, {
+        GITHUB_SERVER_URL: 'https://github.com',
+        GITHUB_REPOSITORY: 'acme/orders',
+        GITHUB_RUN_ID: '123',
+        GITHUB_REF: 'refs/pull/42/merge',
+      }),
+    ).toEqual({
+      build_url: 'https://github.com/acme/orders/actions/runs/123',
+      change_url: 'https://github.com/acme/orders/pull/42',
+    });
+    expect(
+      resolveOrigin({}, {
+        CI_JOB_URL: 'https://gitlab/acme/orders/-/jobs/7',
+        CI_MERGE_REQUEST_PROJECT_URL: 'https://gitlab/acme/orders',
+        CI_MERGE_REQUEST_IID: '12',
+      }),
+    ).toEqual({
+      build_url: 'https://gitlab/acme/orders/-/jobs/7',
+      change_url: 'https://gitlab/acme/orders/-/merge_requests/12',
+    });
+    expect(resolveOrigin({}, { BUILD_URL: 'https://jenkins/job/7/', CHANGE_URL: 'https://bitbucket/pr/5' })).toEqual({
+      build_url: 'https://jenkins/job/7/',
+      change_url: 'https://bitbucket/pr/5',
+    });
+    // A push build belongs to no change.
+    expect(
+      resolveOrigin({}, { GITHUB_SERVER_URL: 'https://github.com', GITHUB_REPOSITORY: 'a/b', GITHUB_REF: 'refs/heads/main' }),
+    ).toEqual({});
   });
 });

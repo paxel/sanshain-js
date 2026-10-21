@@ -24,7 +24,21 @@ function streamFields(stream?: Stream): { trunk?: boolean; tag?: string } {
   return {};
 }
 
-export interface ProvidePayload {
+/**
+ * What the pipeline knows about why a provide runs: where the build ran, the
+ * pull or merge request behind it, the tickets it closes and one line of
+ * intent. Sanshain stores it with the version (the latest provide that carries
+ * any of it wins; a byte-identical re-provide only fills an empty one). Every
+ * field is absent when unknown — the server refuses explicit nulls.
+ */
+export interface Origin {
+  build_url?: string;
+  change_url?: string;
+  tickets?: string[];
+  note?: string;
+}
+
+export interface ProvidePayload extends Origin {
   producername: string;
   openapi_yaml: string;
   stability: Stability;
@@ -33,7 +47,7 @@ export interface ProvidePayload {
   tag?: string;
 }
 
-export interface ProvideAsyncApiPayload {
+export interface ProvideAsyncApiPayload extends Origin {
   producername: string;
   asyncapi_yaml: string;
   stability: Stability;
@@ -42,7 +56,7 @@ export interface ProvideAsyncApiPayload {
   tag?: string;
 }
 
-export interface ProvideProtoPayload {
+export interface ProvideProtoPayload extends Origin {
   producername: string;
   proto_content: string;
   stability: Stability;

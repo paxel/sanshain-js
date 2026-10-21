@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { UnknownFieldsError, configBaseDir, envFlag, loadConfig, resolveStability, resolveStreamWithWarning } from './config';
+import { UnknownFieldsError, configBaseDir, envFlag, loadConfig, resolveOrigin, resolveStability, resolveStreamWithWarning } from './config';
 import {
   CatalogPushResponse,
   SanshainClient,
@@ -75,7 +75,11 @@ program
   .option('--tag <branch>', 'this build belongs to a sanshain-branch — release/hotfix pipelines (also: SANSHAIN_TAG)')
   .option('--insecure', 'allow insecure SSL connections', false)
   .option('--force', 'no effect, kept for compatibility (every provide uploads)', false)
-  .option('--best-effort', 'continue on errors', false);
+  .option('--best-effort', 'continue on errors', false)
+  .option('--build-url <url>', "where this build ran (also: SANSHAIN_BUILD_URL; default: the runner's own variable)")
+  .option('--change-url <url>', "the pull or merge request behind this build (also: SANSHAIN_CHANGE_URL; default: the runner's own variable)")
+  .option('--tickets <ids>', 'ticket ids this build closes, comma-separated (also: SANSHAIN_TICKETS)')
+  .option('--note <text>', 'one line of intent for this provide (also: SANSHAIN_NOTE)');
 
 program
   .command('provide')
@@ -107,6 +111,12 @@ program
       const token = globalOptions.token || process.env.SANSHAIN_TOKEN;
       const insecure = globalOptions.insecure || false;
       const stability = resolveStability(globalOptions.ga);
+      const origin = resolveOrigin({
+        buildUrl: globalOptions.buildUrl,
+        changeUrl: globalOptions.changeUrl,
+        tickets: globalOptions.tickets,
+        note: globalOptions.note,
+      });
 
       const strict = config.strict || false;
       const stream = streamFor(strict, globalOptions.trunk, globalOptions.tag);
@@ -155,7 +165,8 @@ program
                 openapi_yaml: content,
                 stability,
                 dry_run: options.dryRun,
-                ...stream
+                ...stream,
+                ...origin
               }, config.compression));
             } else if (effectiveApiType === 'asyncapi') {
               response = await checked(client, strict, () => client.provideAsyncApi({
@@ -163,7 +174,8 @@ program
                 asyncapi_yaml: content,
                 stability,
                 dry_run: options.dryRun,
-                ...stream
+                ...stream,
+                ...origin
               }, config.compression));
             } else if (effectiveApiType === 'proto' || effectiveApiType === 'grpc') {
               response = await checked(client, strict, () => client.provideProto({
@@ -171,7 +183,8 @@ program
                 proto_content: content,
                 stability,
                 dry_run: options.dryRun,
-                ...stream
+                ...stream,
+                ...origin
               }, config.compression));
             }
           } catch (error: any) {

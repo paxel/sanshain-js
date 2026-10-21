@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import yaml from 'js-yaml';
-import { Stability, Stream } from './api';
+import { Stability, Stream, Origin } from './api';
 
 export interface EndpointConfig {
   method: string;
@@ -70,6 +70,66 @@ export function resolveStability(gaFlag?: boolean): Stability {
     return 'ga';
   }
   return 'snapshot';
+}
+
+/** The first value that is not blank, trimmed; undefined when there is none. */
+function firstOf(...values: (string | undefined)[]): string | undefined {
+  for (const v of values) {
+    const t = (v ?? '').trim();
+    if (t) return t;
+  }
+  return undefined;
+}
+
+/** Where this build ran, from the runner's own variables (GitHub Actions, GitLab CI, Jenkins). */
+function runnerBuildUrl(env: NodeJS.ProcessEnv): string | undefined {
+  const { GITHUB_SERVER_URL: server, GITHUB_REPOSITORY: repo, GITHUB_RUN_ID: run } = env;
+  if (server?.trim() && repo?.trim() && run?.trim()) {
+    return `${server.trim()}/${repo.trim()}/actions/runs/${run.trim()}`;
+  }
+  return firstOf(env.CI_JOB_URL, env.BUILD_URL);
+}
+
+/** The pull or merge request this build belongs to, from the runner's own variables. */
+function runnerChangeUrl(env: NodeJS.ProcessEnv): string | undefined {
+  const server = env.GITHUB_SERVER_URL?.trim();
+  const repo = env.GITHUB_REPOSITORY?.trim();
+  const ref = env.GITHUB_REF?.trim() ?? '';
+  if (server && repo && ref.startsWith('refs/pull/')) {
+    const number = ref.split('/')[2];
+    if (number) return `${server}/${repo}/pull/${number}`;
+  }
+  const project = env.CI_MERGE_REQUEST_PROJECT_URL?.trim();
+  const iid = env.CI_MERGE_REQUEST_IID?.trim();
+  if (project && iid) return `${project}/-/merge_requests/${iid}`;
+  return firstOf(env.CHANGE_URL);
+}
+
+/**
+ * Resolve the origin of this build: an explicit option first, then
+ * SANSHAIN_BUILD_URL / SANSHAIN_CHANGE_URL / SANSHAIN_TICKETS / SANSHAIN_NOTE,
+ * and for the build and change URL the runner's own variables. Tickets and the
+ * note are human intent and never come from the runner. Nothing is read from git.
+ * Only the fields that are known are present.
+ */
+export function resolveOrigin(
+  options: { buildUrl?: string; changeUrl?: string; tickets?: string; note?: string } = {},
+  env: NodeJS.ProcessEnv = process.env,
+): Origin {
+  const origin: Origin = {};
+  const buildUrl = firstOf(options.buildUrl, env.SANSHAIN_BUILD_URL, runnerBuildUrl(env));
+  const changeUrl = firstOf(options.changeUrl, env.SANSHAIN_CHANGE_URL, runnerChangeUrl(env));
+  const note = firstOf(options.note, env.SANSHAIN_NOTE);
+  const tickets: string[] = [];
+  for (const raw of (firstOf(options.tickets, env.SANSHAIN_TICKETS) ?? '').split(',')) {
+    const id = raw.trim();
+    if (id && !tickets.includes(id)) tickets.push(id);
+  }
+  if (buildUrl) origin.build_url = buildUrl;
+  if (changeUrl) origin.change_url = changeUrl;
+  if (tickets.length) origin.tickets = tickets;
+  if (note) origin.note = note;
+  return origin;
 }
 
 /** What a build declaring both trunk and a tag is told; it sends neither. */

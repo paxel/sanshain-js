@@ -98,6 +98,34 @@ function writeProject(yaml: string, files: Record<string, string> = {}): string 
   return configPath;
 }
 
+describe('the origin of a provide', () => {
+  it('sends --tickets and --note and omits what is unknown', async () => {
+    const saved = { ...process.env };
+    for (const k of ['GITHUB_SERVER_URL', 'GITHUB_REPOSITORY', 'GITHUB_RUN_ID', 'GITHUB_REF', 'CI_JOB_URL',
+      'CI_MERGE_REQUEST_PROJECT_URL', 'CI_MERGE_REQUEST_IID', 'BUILD_URL', 'CHANGE_URL',
+      'SANSHAIN_BUILD_URL', 'SANSHAIN_CHANGE_URL', 'SANSHAIN_TICKETS', 'SANSHAIN_NOTE']) {
+      delete process.env[k];
+    }
+    try {
+      const config = writeProject(
+        'sanshainUrl: http://localhost:3000\nserviceName: svc\nprovide:\n  file: openapi.yaml\n',
+        { 'openapi.yaml': 'openapi: 3.0.3\ninfo:\n  version: 1.0.0\n' }
+      );
+      const run = await runCli(['-c', config, '--tickets', 'ORD-7,ORD-9', '--note', 'Adds users', 'provide'], (axios) => {
+        axios.post.mockResolvedValue({ status: 202, data: PROVIDE_OK, headers: {} });
+      });
+      expect(run.exitCode).toBeUndefined();
+      const payload = run.axios.post.mock.calls[0][1];
+      expect(payload.tickets).toEqual(['ORD-7', 'ORD-9']);
+      expect(payload.note).toBe('Adds users');
+      expect('build_url' in payload).toBe(false);
+      expect('change_url' in payload).toBe(false);
+    } finally {
+      process.env = saved;
+    }
+  });
+});
+
 describe('paths relative to sanshain.yaml', () => {
   it('provide reads the spec file next to the config, not in the working directory', async () => {
     const config = writeProject(
