@@ -177,6 +177,17 @@ The latest provide that carries any of it wins; a byte-identical re-provide only
 origin. Nothing is read from git. A service before 2.9.0 refuses the origin fields; the client then
 warns and repeats the provide without them, so upgrading the client first never fails a build.
 
+A flag wins over its `SANSHAIN_*` variable, which wins over the runner's variable. A blank value
+counts as unset, so an empty flag or variable does not switch the runner's URL off; only unsetting
+the runner variable does. Other CI systems (Azure Pipelines, Bitbucket Pipelines, CircleCI,
+Buildkite, TeamCity, …) fill nothing: set `SANSHAIN_BUILD_URL` and `SANSHAIN_CHANGE_URL` from their
+variables. The service accepts http(s) URLs, at most 20 ticket ids made of letters, digits, `-`, `_`
+and `.`, and a note of at most 200 characters.
+
+`provide --dry-run` sends `dry_run`: Sanshain parses the spec and applies the version rules, and
+stores nothing — the check for a pull request. The GitHub Action has no dry-run input; run the CLI
+for it.
+
 ## Retiring a protocol
 
 Removing a `provides` entry tells Sanshain nothing — it cannot distinguish a dropped protocol
