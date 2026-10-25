@@ -9,6 +9,10 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # 20 is the floor the README badge promises (commander 14 needs it); 24 is current.
+    strategy:
+      matrix:
+        node-version: [ '20', '24' ]
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -16,7 +20,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: '24'
+          node-version: ${{ matrix.node-version }}
           cache: 'npm'
 
       - name: Install dependencies
