@@ -1,5 +1,5 @@
 import axios, { AxiosInstance, AxiosResponse } from 'axios';
-import yaml from 'js-yaml';
+import { load } from 'js-yaml';
 import { compress, decompress, normalizeLineEndings, sanitize } from './utils';
 
 export type Stability = 'snapshot' | 'ga';
@@ -645,7 +645,7 @@ export class SanshainClient {
     if (format !== 'openapi' || result.notModified) return result;
     let isOpenApi = false;
     try {
-      const doc = yaml.load(result.content ?? '');
+      const doc = load(result.content ?? '');
       isOpenApi = typeof doc === 'object' && doc !== null && 'openapi' in doc;
     } catch {
       // not parseable — not OpenAPI

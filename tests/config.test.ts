@@ -40,6 +40,28 @@ requires:
     expect(config.requires?.[0].version).toBe('1.2.0');
   });
 
+  it('should resolve merge keys, so requires entries can share settings through an anchor', () => {
+    writeConfig(`
+sanshainUrl: http://localhost:3000
+serviceName: test-service
+requires:
+  - &other
+    serviceName: other-service
+    version: 1.2.0
+    outputDirectory: gen
+    endpoints:
+      - method: GET
+        path: /api
+  - <<: *other
+    outputDirectory: gen2
+`);
+
+    const config = loadConfig(testYamlPath);
+    expect(config.requires?.[1].serviceName).toBe('other-service');
+    expect(config.requires?.[1].version).toBe('1.2.0');
+    expect(config.requires?.[1].outputDirectory).toBe('gen2');
+  });
+
   it('should throw error on missing required field', () => {
     writeConfig(`
 serviceName: test-service

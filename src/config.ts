@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import yaml from 'js-yaml';
+import { load, CORE_SCHEMA, mergeTag } from 'js-yaml';
 import { Stability, Stream, Origin } from './api';
 
 export interface EndpointConfig {
@@ -171,7 +171,9 @@ export function loadConfig(configPath: string = 'sanshain.yaml'): SanshainConfig
   }
 
   const fileContents = fs.readFileSync(fullPath, 'utf8');
-  const config = yaml.load(fileContents) as SanshainConfig;
+  // js-yaml 5 reads YAML 1.2 without merge keys; `<<` is added back so a
+  // sanshain.yaml that shares settings through anchors keeps working.
+  const config = load(fileContents, { schema: CORE_SCHEMA.withTags(mergeTag) }) as SanshainConfig;
 
   applyEnvOverrides(config);
   // Order matters: removed fields fail by name first, then unknown fields get
