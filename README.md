@@ -1,5 +1,11 @@
 # sanshain (JS/TS client)
 
+[![Build and Test](https://github.com/paxel/sanshain-js/actions/workflows/build.yml/badge.svg?branch=summer)](https://github.com/paxel/sanshain-js/actions/workflows/build.yml)
+[![Security](https://github.com/paxel/sanshain-js/actions/workflows/security.yml/badge.svg?branch=summer)](https://github.com/paxel/sanshain-js/actions/workflows/security.yml)
+[![npm](https://img.shields.io/npm/v/sanshain)](https://www.npmjs.com/package/sanshain)
+[![Node 20+](https://img.shields.io/badge/node-20%2B-blue)](https://github.com/paxel/sanshain-js/actions/workflows/build.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](https://github.com/paxel/sanshain-js/blob/summer/LICENSE)
+
 TypeScript/Node.js client and CLI for the [Sanshain Service](https://github.com/paxel/sanshain-service), published on npm as **`sanshain`**.
 
 Sanshain (Japanese for "Sunshine") is a specialized REST service designed to manage, split, and distribute API specifications (OpenAPI, AsyncAPI, gRPC/Proto). `SanshainJS` provides a seamless way for TypeScript-based microservices to publish their API contracts and consume only the specific endpoints they need.
