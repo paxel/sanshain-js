@@ -958,6 +958,16 @@ describe('version', () => {
     const { program } = require('../src/cli');
     expect(program.version()).toBe(require('../package.json').version);
   });
+
+  it('is read from package.json, never written into the CLI', () => {
+    let program: any;
+    jest.isolateModules(() => {
+      jest.doMock('../package.json', () => ({ version: '9.8.7' }));
+      program = require('../src/cli').program;
+    });
+    jest.dontMock('../package.json');
+    expect(program.version()).toBe('9.8.7');
+  });
 });
 
 describe('no provide skip, no dry-run caching', () => {

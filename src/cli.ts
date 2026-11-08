@@ -111,10 +111,18 @@ function etagFor(cache: SanshainCache, key: string, outputFile: string): string 
   return fs.existsSync(outputFile) ? cache.getRequireEntry(key)?.etag : undefined;
 }
 
+/**
+ * The version in package.json, so a version bump cannot leave the CLI behind.
+ * From src/ and from dist/ alike, package.json sits one directory up.
+ */
+function packageVersion(): string {
+  return require('../package.json').version;
+}
+
 program
   .name('sanshain')
   .description('Sanshain CLI client for managing OpenAPI specs')
-  .version('2.6.0')
+  .version(packageVersion())
   .option('-c, --config <path>', 'path to sanshain.yaml', 'sanshain.yaml')
   .option('-u, --url <url>', 'Sanshain service URL')
   .option('-t, --token <token>', 'authentication token')
