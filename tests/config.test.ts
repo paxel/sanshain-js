@@ -1,4 +1,4 @@
-import { UnknownFieldsError, envFlag, loadConfig, resolveOrigin, resolveStability, resolveStream } from '../src/config';
+import { UnknownFieldsError, envFlag, loadConfig, resolveOrigin, resolveStability, resolveStream, streamDeclared } from '../src/config';
 import fs from 'fs';
 import path from 'path';
 
@@ -252,6 +252,68 @@ describe('Stability resolution (ga switch)', () => {
     process.env.SANSHAIN_GA = 'false';
     expect(resolveStability(true)).toBe('ga');
   });
+
+  it('autoGa makes a build that declares a stream GA', () => {
+    expect(resolveStability(undefined, true, true)).toBe('ga');
+    expect(resolveStability(false, true, true)).toBe('ga');
+  });
+
+  it('autoGa without a declared stream stays a snapshot', () => {
+    expect(resolveStability(undefined, true, false)).toBe('snapshot');
+  });
+
+  it('a declared stream without autoGa stays a snapshot', () => {
+    expect(resolveStability(undefined, false, true)).toBe('snapshot');
+  });
+
+  it('an explicit SANSHAIN_GA=false beats autoGa, a blank one does not', () => {
+    process.env.SANSHAIN_GA = 'false';
+    expect(resolveStability(undefined, true, true)).toBe('snapshot');
+    // Any non-blank value is set and read like every switch: off.
+    process.env.SANSHAIN_GA = 'yes';
+    expect(resolveStability(undefined, true, true)).toBe('snapshot');
+    process.env.SANSHAIN_GA = '  ';
+    expect(resolveStability(undefined, true, true)).toBe('ga');
+  });
+
+  it('SANSHAIN_GA=true makes GA without autoGa or a stream', () => {
+    process.env.SANSHAIN_GA = 'true';
+    expect(resolveStability(undefined, false, false)).toBe('ga');
+  });
+});
+
+describe('streamDeclared (what autoGa looks at)', () => {
+  const originalEnv = process.env;
+
+  beforeEach(() => {
+    process.env = { ...originalEnv };
+    delete process.env.SANSHAIN_TRUNK;
+    delete process.env.SANSHAIN_TAG;
+  });
+
+  afterAll(() => {
+    process.env = originalEnv;
+  });
+
+  it('is false without trunk or a tag', () => {
+    expect(streamDeclared()).toBe(false);
+    expect(streamDeclared(false, '  ')).toBe(false);
+  });
+
+  it('is true for trunk or a tag, from the flag or the environment', () => {
+    expect(streamDeclared(true)).toBe(true);
+    expect(streamDeclared(false, 'release-1')).toBe(true);
+    process.env.SANSHAIN_TRUNK = '1';
+    expect(streamDeclared()).toBe(true);
+    delete process.env.SANSHAIN_TRUNK;
+    process.env.SANSHAIN_TAG = 'release-1';
+    expect(streamDeclared()).toBe(true);
+  });
+
+  it('is true for both, although that sends neither', () => {
+    expect(streamDeclared(true, 'release-1')).toBe(true);
+    expect(resolveStream(true, 'release-1')).toEqual({});
+  });
 });
 
 describe('SANSHAIN_* boolean switches', () => {
@@ -453,6 +515,7 @@ describe('unknown fields (the puzzled cat)', () => {
         'insecure: true',
         'combine: true',
         'catalogInfo: catalog-info.yaml',
+        'autoGa: true',
         'provides:',
         '  - file: a.yaml',
         '    combine: true',

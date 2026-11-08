@@ -16,7 +16,7 @@ Sanshain (Japanese for "Sunshine") is a specialized REST service designed to man
 
 - **The version lives in the spec file.** OpenAPI/AsyncAPI: `info.version`. Proto: a mandatory `// sanshain-version:` comment. Accepted spellings are `MAJOR[.MINOR[.PATCH]]`, optionally `v`-prefixed — omitted parts are zero (`v2` becomes `2.0.0`) and the stored form is always the full three-part version. No suffixes.
 - **Consumers pin exact versions.** Every `requires` entry carries a `version`; there is no fallback and nothing waits.
-- **Stability is a switch, not git magic.** Every provide is a `snapshot` unless you explicitly pass `--ga` (or set `SANSHAIN_GA=true`).
+- **Stability is a switch, not git magic.** Every provide is a `snapshot` unless you explicitly pass `--ga` (or set `SANSHAIN_GA=true`), or `autoGa: true` meets a trunk or tag build.
 
 `sanshain catalog` and `format: openapi` on a require need **Sanshain Service 2.4.0** or later; everything else works with any 2.x service.
 
@@ -28,7 +28,7 @@ If you point this client at a pre-2.0 Sanshain server, it will detect that (one 
 - **Maven-like Lifecycle**: Easily integrates into `package.json` scripts for automatic build-time updates.
 - **Deduplication**: Automatically handles shared DTOs using Sanshain's bundle API.
 - **Version Pinning**: `requires` entries pin exact producer versions — builds are reproducible by construction.
-- **Stability Switch**: `snapshot` by default; `--ga` / `SANSHAIN_GA=true` for immutable GA publishes (set it on protected-branch pipelines).
+- **Stability Switch**: `snapshot` by default; `--ga` / `SANSHAIN_GA=true` for immutable GA publishes (set it on protected-branch pipelines), or `autoGa: true` for GA on every trunk or tag build.
 - **GZIP Compression**: Efficient data transfer for large specifications.
 - **CI/CD Ready**: Built-in support for any CI/CD platform (GitLab, Jenkins, GitHub, etc.).
 - **ETag Caching**: Skips require when server spec is unchanged (304 Not Modified).
@@ -118,17 +118,17 @@ requires:
 
 ### Environment Variable Overrides
 
-| Variable                | Description                                                     |
-|-------------------------|-----------------------------------------------------------------|
-| `SANSHAIN_URL`          | Override `sanshainUrl` (the `--url` flag overrides both)        |
-| `SANSHAIN_TOKEN`        | Bearer token for authentication                                 |
-| `SANSHAIN_SERVICE_NAME` | Override `serviceName`                                          |
-| `SANSHAIN_GA`           | Set to `true` to provide as GA instead of snapshot              |
-| `SANSHAIN_TRUNK`        | Set to `true` on trunk CI (same as `--trunk`)                   |
-| `SANSHAIN_BEST_EFFORT`  | Set to `true` to continue on errors                             |
-| `SANSHAIN_STRICT`       | Set to `true` to fail on missing configuration                  |
-| `SANSHAIN_FORCE`        | No effect (accepted for compatibility; every provide uploads)   |
-| `SANSHAIN_COMPRESSION`  | Override `compression`                                          |
+| Variable                | Description                                                                          |
+|-------------------------|--------------------------------------------------------------------------------------|
+| `SANSHAIN_URL`          | Override `sanshainUrl` (the `--url` flag overrides both)                             |
+| `SANSHAIN_TOKEN`        | Bearer token for authentication                                                      |
+| `SANSHAIN_SERVICE_NAME` | Override `serviceName`                                                               |
+| `SANSHAIN_GA`           | `true` provides as GA instead of snapshot; `false` keeps a snapshot despite `autoGa` |
+| `SANSHAIN_TRUNK`        | Set to `true` on trunk CI (same as `--trunk`)                                        |
+| `SANSHAIN_BEST_EFFORT`  | Set to `true` to continue on errors                                                  |
+| `SANSHAIN_STRICT`       | Set to `true` to fail on missing configuration                                       |
+| `SANSHAIN_FORCE`        | No effect (accepted for compatibility; every provide uploads)                        |
+| `SANSHAIN_COMPRESSION`  | Override `compression`                                                               |
 
 The URL is taken from the `--url` flag first, then `SANSHAIN_URL`, then `sanshainUrl` in `sanshain.yaml`.
 Boolean switches are on for `true` or `1` (trimmed, any case); any other value is off.
@@ -145,10 +145,26 @@ SANSHAIN_GA=true sanshain provide
 
 There is no git or branch detection — CI simply sets `SANSHAIN_GA=true` on protected-branch pipelines, and that is the whole mechanism. GA versions permanently claim their number; re-providing a GA version with different content is rejected (see below). Publishing GA requires the `releaser` role — without it the server answers `403` and the error names the role and the snapshot fallback.
 
+### autoGa: GA on every trunk or tag build
+
+```yaml
+autoGa: true
+```
+
+With `autoGa: true` in `sanshain.yaml` a provide is GA whenever the build declares a stream: trunk (`--trunk` / `SANSHAIN_TRUNK`) or a tag (`--tag` / `SANSHAIN_TAG`), also when it declares both. Without a stream it stays a snapshot, so a developer's laptop never releases. The first of these that is set decides:
+
+1. `--ga` (it can only say GA);
+2. `SANSHAIN_GA` (an explicit `false` counts; empty or absent does not);
+3. `autoGa: true` with trunk or a tag;
+4. `snapshot`.
+
+There is still no branch detection: CI declares trunk and tag on its protected pipelines only, and that is what makes them GA. The CI token's user needs the `releaser` role, and a trunk build that changes the spec without a version bump fails with `409 immutable_ga` and the proposed version: bump the version in the spec file and build again. A retire never carries a stability, `autoGa` or not. In the GitHub Action leave the `ga` input empty (its default) to let `autoGa` decide.
+
 ## Streams: trunk and release branches
 
 Alongside stability, the pipeline declares which dependency graph its calls belong to. Like the
-ga switch this is a property of the invocation and never appears in `sanshain.yaml`:
+ga switch this is a property of the invocation and never appears in `sanshain.yaml` (only
+`autoGa` may say what a declared stream means for stability):
 
 ```bash
 sanshain provide --trunk        # trunk CI: maintains the main graph (also SANSHAIN_TRUNK=true)

@@ -153,6 +153,104 @@ describe('an older service refusing the origin', () => {
   });
 });
 
+describe('autoGa', () => {
+  const SPEC = { 'openapi.yaml': 'openapi: 3.0.3\ninfo:\n  version: 1.0.0\n' };
+  const yaml = (autoGa?: boolean) =>
+    'sanshainUrl: http://localhost:3000\nserviceName: svc\n' +
+    (autoGa === undefined ? '' : `autoGa: ${autoGa}\n`) +
+    'provide:\n  file: openapi.yaml\n';
+
+  // autoGa | stream | --ga | SANSHAIN_GA | stability. The --ga flag can only
+  // say true, so there is no row for an explicit --ga=false.
+  it.each([
+    ['true', 'trunk', [], '-', 'ga', true],
+    ['true', 'tag=release-1', [], '-', 'ga', true],
+    ['true', 'none', [], '-', 'snapshot', true],
+    ['true', 'trunk', [], 'false', 'snapshot', true],
+    ['false', 'trunk', [], '-', 'snapshot', false],
+    ['absent', 'none', [], 'true', 'ga', undefined],
+    ['true', 'none', ['--ga'], 'false', 'ga', true]
+  ] as [string, string, string[], string, string, boolean | undefined][])(
+    'autoGa %s, stream %s, flags %j, SANSHAIN_GA %s: %s',
+    async (_label, stream, flags, gaEnv, expected, autoGa) => {
+      if (gaEnv !== '-') process.env.SANSHAIN_GA = gaEnv;
+      const streamArgs = stream === 'trunk' ? ['--trunk'] : stream.startsWith('tag=') ? ['--tag', stream.slice(4)] : [];
+      const config = writeProject(yaml(autoGa), SPEC);
+
+      const run = await runCli(['-c', config, ...streamArgs, ...flags, 'provide'], (axios) => {
+        axios.post.mockResolvedValue({ status: 202, data: PROVIDE_OK, headers: {} });
+      });
+
+      expect(run.exitCode).toBeUndefined();
+      expect(run.axios.post.mock.calls[0][1].stability).toBe(expected);
+    }
+  );
+
+  it('reads the stream from SANSHAIN_TRUNK and SANSHAIN_TAG too', async () => {
+    const config = writeProject(yaml(true), SPEC);
+    process.env.SANSHAIN_TRUNK = 'true';
+    const trunkRun = await runCli(['-c', config, 'provide'], (axios) => {
+      axios.post.mockResolvedValue({ status: 202, data: PROVIDE_OK, headers: {} });
+    });
+    expect(trunkRun.axios.post.mock.calls[0][1]).toMatchObject({ stability: 'ga', trunk: true });
+
+    delete process.env.SANSHAIN_TRUNK;
+    process.env.SANSHAIN_TAG = 'release-1';
+    const tagRun = await runCli(['-c', config, 'provide'], (axios) => {
+      axios.post.mockResolvedValue({ status: 202, data: PROVIDE_OK, headers: {} });
+    });
+    expect(tagRun.axios.post.mock.calls[0][1]).toMatchObject({ stability: 'ga', tag: 'release-1' });
+  });
+
+  it('trunk and a tag together still count as a declared stream', async () => {
+    const config = writeProject(yaml(true), SPEC);
+
+    const run = await runCli(['-c', config, '--trunk', '--tag', 'release-1', 'provide'], (axios) => {
+      axios.post.mockResolvedValue({ status: 202, data: PROVIDE_OK, headers: {} });
+    });
+
+    expect(run.exitCode).toBeUndefined();
+    const payload = run.axios.post.mock.calls[0][1];
+    expect(payload.stability).toBe('ga');
+    expect(payload).not.toHaveProperty('trunk');
+    expect(payload).not.toHaveProperty('tag');
+    expect(run.err).toContain('trunk and tag are mutually exclusive');
+  });
+
+  it('a retire on a trunk build with autoGa sends no stability', async () => {
+    const config = writeProject(
+      'sanshainUrl: http://localhost:3000\nserviceName: svc\nautoGa: true\nprovides:\n  - apiType: asyncapi\n    retired: true\n'
+    );
+
+    const run = await runCli(['-c', config, '--trunk', 'provide'], (axios) => {
+      axios.post.mockResolvedValue({
+        status: 200,
+        data: JSON.stringify({ tag_cleared: 'messaging', trunk_pins_closed: 0, contracts_released: 0 }),
+        headers: {}
+      });
+    });
+
+    expect(run.exitCode).toBeUndefined();
+    expect(run.axios.post).toHaveBeenCalledTimes(1);
+    expect(run.axios.post.mock.calls[0][0]).toBe('/provide/asyncapi');
+    expect(run.axios.post.mock.calls[0][1]).toEqual({ producername: 'svc', retired: true });
+  });
+
+  it('a 403 on a GA provide names autoGa and SANSHAIN_GA=false as the way back to a snapshot', async () => {
+    const config = writeProject(yaml(true), SPEC);
+
+    const run = await runCli(['-c', config, '--trunk', 'provide'], (axios) => {
+      axios.get.mockResolvedValue({ status: 200, data: JSON.stringify({ version: '2.13.0' }), headers: {} });
+      axios.post.mockRejectedValue({
+        response: { status: 403, data: JSON.stringify({ error: "requires the 'releaser' role" }), headers: {} }
+      });
+    });
+
+    expect(run.exitCode).toBe(1);
+    expect(run.err).toContain('autoGa off (or setting SANSHAIN_GA=false)');
+  });
+});
+
 describe('paths relative to sanshain.yaml', () => {
   it('provide reads the spec file next to the config, not in the working directory', async () => {
     const config = writeProject(

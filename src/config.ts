@@ -43,6 +43,11 @@ export interface SanshainConfig {
   bestEffort?: boolean;
   force?: boolean;
   strict?: boolean;
+  /**
+   * A provide is GA whenever the build declares a stream (trunk or a tag),
+   * unless the --ga flag or SANSHAIN_GA says otherwise.
+   */
+  autoGa?: boolean;
   /** Path to the Backstage catalog-info.yaml the catalog command pushes. */
   catalogInfo?: string;
   provide?: ProvideConfig;
@@ -60,16 +65,24 @@ export function envFlag(name: string): boolean {
 }
 
 /**
- * Decide the stability of a Provide. Always 'snapshot' unless explicitly
- * switched to 'ga' via the --ga CLI flag or the SANSHAIN_GA=true environment
- * variable (typically set by CI on protected-branch pipelines). There is no
- * git or branch magic, and no stability field in sanshain.yaml.
+ * Decide the stability of a Provide. The first of these that is set decides:
+ *  1. the --ga flag (it can only say true; false or absent is unset);
+ *  2. SANSHAIN_GA when not blank, read like every switch, so an explicit
+ *     `false` counts;
+ *  3. `autoGa: true` in sanshain.yaml on a build that declares a stream
+ *     (trunk, a tag, or both — see streamDeclared);
+ *  4. otherwise 'snapshot'.
+ * There is no git or branch detection: CI declares trunk and tag on its
+ * protected pipelines, so only those builds become GA through autoGa.
  */
-export function resolveStability(gaFlag?: boolean): Stability {
-  if (gaFlag || envFlag('SANSHAIN_GA')) {
+export function resolveStability(gaFlag?: boolean, autoGa: boolean = false, streamIsDeclared: boolean = false): Stability {
+  if (gaFlag) {
     return 'ga';
   }
-  return 'snapshot';
+  if ((process.env.SANSHAIN_GA ?? '').trim() !== '') {
+    return envFlag('SANSHAIN_GA') ? 'ga' : 'snapshot';
+  }
+  return autoGa && streamIsDeclared ? 'ga' : 'snapshot';
 }
 
 /** The first value that is not blank, trimmed; undefined when there is none. */
@@ -142,12 +155,28 @@ export const TRUNK_AND_TAG_WARNING = 'trunk and tag are mutually exclusive - thi
  * recorded in neither and the warning says so (strict mode makes it fatal).
  */
 export function resolveStreamWithWarning(trunkFlag?: boolean, tagFlag?: string): { stream: Stream; warning?: string } {
-  const trunk = Boolean(trunkFlag) || envFlag('SANSHAIN_TRUNK');
-  const tag = (tagFlag || process.env.SANSHAIN_TAG || '').trim() || undefined;
+  const { trunk, tag } = declaredStream(trunkFlag, tagFlag);
   if (trunk && tag) {
     return { stream: {}, warning: TRUNK_AND_TAG_WARNING };
   }
   return { stream: trunk ? { trunk: true } : tag ? { tag } : {} };
+}
+
+/** Trunk and the tag as this build declares them, the flags before SANSHAIN_TRUNK / SANSHAIN_TAG. */
+function declaredStream(trunkFlag?: boolean, tagFlag?: string): { trunk: boolean; tag?: string } {
+  const trunk = Boolean(trunkFlag) || envFlag('SANSHAIN_TRUNK');
+  const tag = (tagFlag || process.env.SANSHAIN_TAG || '').trim() || undefined;
+  return { trunk, tag };
+}
+
+/**
+ * Whether the build declares a stream: trunk, a tag, or both — which sends
+ * neither (with the warning) but still declared one. This is what makes a
+ * provide GA under `autoGa: true`.
+ */
+export function streamDeclared(trunkFlag?: boolean, tagFlag?: string): boolean {
+  const { trunk, tag } = declaredStream(trunkFlag, tagFlag);
+  return trunk || tag !== undefined;
 }
 
 /** The stream alone, as resolveStreamWithWarning resolves it: both trunk and a tag give neither. */
@@ -198,7 +227,7 @@ export class UnknownFieldsError extends Error {
 // this one does not is still known: one sanshain.yaml serves every client.
 const KNOWN_TOP = new Set([
   'sanshainUrl', 'serviceName', 'clientName', 'compression', 'bestEffort', 'strict', 'force',
-  'insecure', 'combine', 'catalogInfo', 'provide', 'provides', 'requires'
+  'insecure', 'combine', 'catalogInfo', 'autoGa', 'provide', 'provides', 'requires'
 ]);
 const KNOWN_PROVIDE = new Set(['file', 'apiType', 'retired', 'openApiFile', 'asyncApiFile', 'protoFile', 'combine']);
 const KNOWN_REQUIRE = new Set(['serviceName', 'apiType', 'version', 'outputDirectory', 'endpoints', 'format']);
@@ -303,7 +332,7 @@ const TIMEOUT_HINT =
 const BASE_VERSION_HINT =
   "'baseVersion' is no longer supported — Sanshain 2.0 removed optimistic concurrency; the version is read from the spec file (info.version); remove it";
 const RELEASE_BRANCHES_HINT =
-  "'releaseBranches' is no longer supported — stability is 'snapshot' by default; pass --ga or set SANSHAIN_GA=true for GA builds";
+  "'releaseBranches' is no longer supported — stability is 'snapshot' by default; pass --ga or set SANSHAIN_GA=true for GA builds, or set autoGa: true to make trunk and tag builds GA";
 
 /** Branch-era fields are hard errors, by name, before any other check. */
 function rejectLegacyFields(config: any): void {

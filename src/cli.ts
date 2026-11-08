@@ -1,5 +1,14 @@
 import { Command } from 'commander';
-import { UnknownFieldsError, configBaseDir, envFlag, loadConfig, resolveOrigin, resolveStability, resolveStreamWithWarning } from './config';
+import {
+  UnknownFieldsError,
+  configBaseDir,
+  envFlag,
+  loadConfig,
+  resolveOrigin,
+  resolveStability,
+  resolveStreamWithWarning,
+  streamDeclared
+} from './config';
 import {
   CatalogPushResponse,
   SanshainClient,
@@ -70,7 +79,7 @@ program
   .option('-c, --config <path>', 'path to sanshain.yaml', 'sanshain.yaml')
   .option('-u, --url <url>', 'Sanshain service URL')
   .option('-t, --token <token>', 'authentication token')
-  .option('--ga', 'provide as immutable GA instead of the default snapshot (also: SANSHAIN_GA=true)', false)
+  .option('--ga', 'provide as immutable GA instead of the default snapshot (also: SANSHAIN_GA=true; SANSHAIN_GA=false keeps a snapshot despite autoGa)', false)
   .option('--trunk', "this build is trunk's: it maintains the main graph (also: SANSHAIN_TRUNK=true)", false)
   .option('--tag <branch>', 'this build belongs to a sanshain-branch — release/hotfix pipelines (also: SANSHAIN_TAG)')
   .option('--insecure', 'allow insecure SSL connections', false)
@@ -110,7 +119,6 @@ program
       const url = globalOptions.url || config.sanshainUrl;
       const token = globalOptions.token || process.env.SANSHAIN_TOKEN;
       const insecure = globalOptions.insecure || false;
-      const stability = resolveStability(globalOptions.ga);
       const origin = resolveOrigin({
         buildUrl: globalOptions.buildUrl,
         changeUrl: globalOptions.changeUrl,
@@ -119,7 +127,13 @@ program
       });
 
       const strict = config.strict || false;
+      // The stream first: autoGa makes a provide GA on a build that declares one.
       const stream = streamFor(strict, globalOptions.trunk, globalOptions.tag);
+      const stability = resolveStability(
+        globalOptions.ga,
+        config.autoGa === true,
+        streamDeclared(globalOptions.trunk, globalOptions.tag)
+      );
 
       if (!config.serviceName) {
         if (strict) {

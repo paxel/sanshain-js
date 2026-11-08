@@ -9,9 +9,9 @@ inputs:
     description: 'Sanshain API token (optional if set via SANSHAIN_TOKEN secret)'
     required: false
   ga:
-    description: 'Set to "true" to provide as immutable GA instead of the default snapshot (maps to SANSHAIN_GA). Typically set on protected-branch pipelines.'
+    description: 'Set to "true" to provide as immutable GA instead of the default snapshot (maps to SANSHAIN_GA). Typically set on protected-branch pipelines. Leave it empty to let autoGa in sanshain.yaml decide; "false" keeps a snapshot even then.'
     required: false
-    default: 'false'
+    default: ''
   trunk:
     description: 'Set to "true" on trunk CI: this build maintains the main graph (maps to SANSHAIN_TRUNK).'
     required: false

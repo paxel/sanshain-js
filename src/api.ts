@@ -394,7 +394,7 @@ export class SanshainClient {
           "Publishing GA requires the 'releaser' role; retiring requires it too, or a maintainer " +
           'grant on the Producer. Grant the role to the user or token this build authenticates as ' +
           '(administrators and root always hold it), or publish as a snapshot by leaving ' +
-          '--ga / SANSHAIN_GA unset.'
+          '--ga / SANSHAIN_GA unset and autoGa off (or setting SANSHAIN_GA=false).'
       );
     }
     return new Error(`Request failed with status ${status}: ${sanitize(bodyText)}`);
