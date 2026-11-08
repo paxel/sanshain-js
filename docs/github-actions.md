@@ -86,12 +86,16 @@ The Action has no input for the `{{NAME}}` placeholders of the `annotations` in 
 
 ### Inputs
 
-| Input               | Required | Default | Description                                                                                                                          |
-|---------------------|----------|---------|--------------------------------------------------------------------------------------------------------------------------------------|
-| `command`           | yes      | —       | `provide`, `require` or `catalog` (needs Sanshain Service 2.4.0).                                                                    |
-| `token`             | no       | —       | Sanshain API token (or set the `SANSHAIN_TOKEN` env/secret).                                                                         |
-| `ga`                | no       | `''`    | `'true'` publishes as immutable GA, `'false'` keeps a snapshot despite `autoGa`; empty lets `autoGa` decide (maps to `SANSHAIN_GA`). |
-| `working-directory` | no       | `'.'`   | Directory where `sanshain.yaml` is located.                                                                                          |
+| Input               | Required | Default   | Description                                                                                                                                         |
+|---------------------|----------|-----------|-----------------------------------------------------------------------------------------------------------------------------------------------------|
+| `command`           | yes      | —         | `provide`, `require` or `catalog` (needs Sanshain Service 2.4.0).                                                                                   |
+| `token`             | no       | —         | Sanshain API token (or set the `SANSHAIN_TOKEN` env/secret).                                                                                        |
+| `ga`                | no       | `''`      | `'true'` publishes as immutable GA, `'false'` keeps a snapshot despite `autoGa`; empty lets `autoGa` decide (maps to `SANSHAIN_GA`).                |
+| `trunk`             | no       | `'false'` | `'true'` on trunk CI: this build maintains the main graph (maps to `SANSHAIN_TRUNK`).                                                               |
+| `tag`               | no       | `''`      | A sanshain-branch name for release/hotfix pipelines (maps to `SANSHAIN_TAG`); setting it with `trunk` records the build in neither, with a warning. |
+| `tickets`           | no       | `''`      | Ticket ids this build closes, comma-separated, stored with the version's origin (maps to `SANSHAIN_TICKETS`).                                       |
+| `note`              | no       | `''`      | One line of intent for this provide (maps to `SANSHAIN_NOTE`).                                                                                      |
+| `working-directory` | no       | `'.'`     | Directory where `sanshain.yaml` is located.                                                                                                         |
 
 ---
 
