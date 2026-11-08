@@ -394,7 +394,7 @@ program
 
         try {
           let fileName: string;
-          const ext = req.apiType === 'proto' ? 'proto' : 'yaml';
+          const ext = req.apiType === 'proto' || req.apiType === 'grpc' ? 'proto' : 'yaml';
 
           if (req.endpoints.length === 1) {
             // Single endpoint require

@@ -167,6 +167,14 @@ export interface ProvideResponseBody {
   harvested_subscriptions?: HarvestedSubscription[];
 }
 
+/**
+ * A require's apiType as the service's contract spells it: `grpc`, which a
+ * provide accepts too, is `proto` on the wire.
+ */
+function wireApiType(apiType?: string): string | undefined {
+  return apiType === 'grpc' ? 'proto' : apiType;
+}
+
 /** The only conversion a require can ask for: an AsyncAPI channel rendered as OpenAPI. */
 export type RequireFormat = 'openapi';
 
@@ -622,9 +630,10 @@ export class SanshainClient {
     annotations?: Annotation[]
   ): Promise<RequireResult> {
     let url = '/require';
-    if (api_type === 'asyncapi') {
+    const type = wireApiType(api_type);
+    if (type === 'asyncapi') {
       url = '/require/asyncapi';
-    } else if (api_type === 'proto') {
+    } else if (type === 'proto') {
       url = '/require/grpc';
     }
 
@@ -696,7 +705,7 @@ export class SanshainClient {
     const dataWithFallback = this.withAnnotations(
       {
         ...payload,
-        api_type: payload.api_type || 'openapi'
+        api_type: wireApiType(payload.api_type) || 'openapi'
       },
       false
     );

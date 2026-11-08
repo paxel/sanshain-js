@@ -493,6 +493,49 @@ describe('paths relative to sanshain.yaml', () => {
   });
 });
 
+describe('apiType grpc on a require', () => {
+  const entry = (endpoints: string[]) =>
+    [
+      'sanshainUrl: http://localhost:3000',
+      'serviceName: svc',
+      'requires:',
+      '  - serviceName: payments',
+      '    apiType: grpc',
+      '    version: 1.0.0',
+      '    outputDirectory: gen',
+      '    endpoints:',
+      ...endpoints.flatMap((rpc) => ['      - method: RPC', `        path: ${rpc}`]),
+      ''
+    ].join('\n');
+  const PROTO = 'syntax = "proto3";\n';
+
+  it('a single endpoint goes to /require/grpc and is saved as .proto', async () => {
+    const config = writeProject(entry(['pay.Payments/Charge']));
+
+    const run = await runCli(['-c', config, 'require'], (axios) => {
+      axios.get.mockResolvedValue({ status: 200, data: Buffer.from(PROTO), headers: {} });
+    });
+
+    expect(run.exitCode).toBeUndefined();
+    expect(run.axios.get.mock.calls[0][0]).toBe('/require/grpc');
+    expect(fs.readFileSync(path.join(projectDir, 'gen/payments.proto'), 'utf8')).toBe(PROTO);
+    expect(fs.existsSync(path.join(projectDir, 'gen/payments.yaml'))).toBe(false);
+  });
+
+  it('a bundle sends api_type proto and is saved as .proto', async () => {
+    const config = writeProject(entry(['pay.Payments/Charge', 'pay.Payments/Refund']));
+
+    const run = await runCli(['-c', config, 'require'], (axios) => {
+      axios.post.mockResolvedValue({ status: 200, data: Buffer.from(PROTO), headers: {} });
+    });
+
+    expect(run.exitCode).toBeUndefined();
+    expect(run.axios.post.mock.calls[0][0]).toBe('/require-bundle');
+    expect(run.axios.post.mock.calls[0][1].api_type).toBe('proto');
+    expect(fs.readFileSync(path.join(projectDir, 'gen/payments_bundle.proto'), 'utf8')).toBe(PROTO);
+  });
+});
+
 describe('SANSHAIN_URL precedence', () => {
   const yaml = 'sanshainUrl: http://from-yaml\nserviceName: svc\nprovide:\n  file: openapi.yaml\n';
   const ok = (axios: any) => axios.post.mockResolvedValue({ status: 202, data: PROVIDE_OK, headers: {} });
