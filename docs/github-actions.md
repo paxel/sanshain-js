@@ -14,7 +14,7 @@ On your protected-branch workflow, set the `ga` input so the publish is an immut
 
 ```yaml
 - name: Provide Spec
-  uses: paxel/sanshain-js@main
+  uses: paxel/sanshain-js@summer
   with:
     command: provide
     token: ${{ secrets.SANSHAIN_TOKEN }}
@@ -27,7 +27,7 @@ With `autoGa: true` in `sanshain.yaml` the `trunk` (or `tag`) input is enough: s
 
 ```yaml
 - name: Provide Spec
-  uses: paxel/sanshain-js@main
+  uses: paxel/sanshain-js@summer
   with:
     command: provide
     token: ${{ secrets.SANSHAIN_TOKEN }}
@@ -40,7 +40,7 @@ Omit `ga` — without `autoGa` the default is always a snapshot:
 
 ```yaml
 - name: Provide Snapshot
-  uses: paxel/sanshain-js@main
+  uses: paxel/sanshain-js@summer
   with:
     command: provide
     token: ${{ secrets.SANSHAIN_TOKEN }}
@@ -50,7 +50,7 @@ Omit `ga` — without `autoGa` the default is always a snapshot:
 
 ```yaml
 - name: Require Specs
-  uses: paxel/sanshain-js@main
+  uses: paxel/sanshain-js@summer
   with:
     command: require
     token: ${{ secrets.SANSHAIN_TOKEN }}
@@ -62,7 +62,7 @@ Needs `catalogInfo` in `sanshain.yaml` and Sanshain Service 2.4.0 or later:
 
 ```yaml
 - name: Push Catalog
-  uses: paxel/sanshain-js@main
+  uses: paxel/sanshain-js@summer
   with:
     command: catalog
     token: ${{ secrets.SANSHAIN_TOKEN }}
@@ -75,7 +75,7 @@ The Action has no input for the `{{NAME}}` placeholders of the `annotations` in 
 
 ```yaml
 - name: Provide Spec
-  uses: paxel/sanshain-js@main
+  uses: paxel/sanshain-js@summer
   with:
     command: provide
     token: ${{ secrets.SANSHAIN_TOKEN }}
