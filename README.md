@@ -6,430 +6,56 @@
 [![Node 20+](https://img.shields.io/badge/node-20%2B-blue)](https://github.com/paxel/sanshain-js/actions/workflows/build.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](https://github.com/paxel/sanshain-js/blob/summer/LICENSE)
 
-TypeScript/Node.js client and CLI for the [Sanshain Service](https://github.com/paxel/sanshain-service), published on npm as **`sanshain`**.
+TypeScript/Node.js client, CLI and GitHub Action for the [Sanshain Service](https://github.com/paxel/sanshain-service), published on npm as **`sanshain`**. A project provides its API specifications (OpenAPI, AsyncAPI, gRPC/Proto) under the version declared in the spec file, and downloads the endpoint snippets it depends on, pinned to an exact version.
 
-Sanshain (Japanese for "Sunshine") is a specialized REST service designed to manage, split, and distribute API specifications (OpenAPI, AsyncAPI, gRPC/Proto). `SanshainJS` provides a seamless way for TypeScript-based microservices to publish their API contracts and consume only the specific endpoints they need.
+**The documentation lives on the Sanshain site: [JavaScript client](https://paxel.github.io/sanshain-service/developer/clients/javascript.html).** It lists every flag, variable and `sanshain.yaml` field with the version it arrived in, the precedence, the ETag state file, strict mode and best effort, the failure modes, the library exports, [the GitHub Action](https://paxel.github.io/sanshain-service/developer/clients/javascript.html#github-action) and CI recipes. The file itself is described in [`sanshain.yaml`](https://paxel.github.io/sanshain-service/developer/sanshain-yaml.html).
 
-## Compatibility
+**Compatibility: client 2.x speaks Sanshain Service 2.x.** Node.js 20 or later.
 
-**Client 2.x speaks Sanshain Service 2.x.** Sanshain 2.0 replaced the branch model with producer-declared versions, and this client is a clean break to match: it talks only the 2.x wire contract.
-
-- **The version lives in the spec file.** OpenAPI/AsyncAPI: `info.version`. Proto: a mandatory `// sanshain-version:` comment. Accepted spellings are `MAJOR[.MINOR[.PATCH]]`, optionally `v`-prefixed — omitted parts are zero (`v2` becomes `2.0.0`) and the stored form is always the full three-part version. No suffixes.
-- **Consumers pin exact versions.** Every `requires` entry carries a `version`; there is no fallback and nothing waits.
-- **Stability is a switch, not git magic.** Every provide is a `snapshot` unless you explicitly pass `--ga` (or set `SANSHAIN_GA=true`), or `autoGa: true` meets a trunk or tag build.
-
-`sanshain catalog` and `format: openapi` on a require need **Sanshain Service 2.4.0** or later, and `annotations` need **Sanshain Service 2.13.0** or later; everything else works with any 2.x service.
-
-If you point this client at a pre-2.0 Sanshain server, it will detect that (one lazy `GET /version` after a failure) and tell you to upgrade the server.
-
-## Features
-
-- **CLI Tool**: Easy-to-use commands for `provide`, `require` and `catalog` operations.
-- **Maven-like Lifecycle**: Easily integrates into `package.json` scripts for automatic build-time updates.
-- **Deduplication**: Automatically handles shared DTOs using Sanshain's bundle API.
-- **Version Pinning**: `requires` entries pin exact producer versions — builds are reproducible by construction.
-- **Stability Switch**: `snapshot` by default; `--ga` / `SANSHAIN_GA=true` for immutable GA publishes (set it on protected-branch pipelines), or `autoGa: true` for GA on every trunk or tag build.
-- **GZIP Compression**: Efficient data transfer for large specifications.
-- **CI/CD Ready**: Built-in support for any CI/CD platform (GitLab, Jenkins, GitHub, etc.).
-- **ETag Caching**: Skips require when server spec is unchanged (304 Not Modified).
-- **Strict Mode**: Optional strict validation for CI environments.
-
-## How it Works (Data Flow)
-
-SanshainJS acts as a bridge between your microservices. It follows a "Download-then-Generate" pattern:
-
-1.  **Configure**: Define which services you need — and at exactly which version — in `sanshain.yaml`.
-2.  **Download**: Run `sanshain require`. The CLI fetches the pinned endpoint snippets from the **Sanshain Service** and saves them as `.yaml` (or `.proto`) files in your local `outputDirectory`.
-3.  **Generate**: Use a tool like `openapi-typescript` to turn those local `.yaml` files into `.ts` code.
-4.  **Develop**: Your application imports the generated TypeScript code with full autocomplete and type safety.
-
-This ensures your service only knows about the specific endpoints it actually uses, at the exact versions it pinned.
-
-## Installation
+## Install
 
 ```bash
 npm install --save-dev sanshain
 ```
 
-## Configuration (`sanshain.yaml`)
+## A minimal example
 
-`SanshainJS` uses the standard `sanshain.yaml` configuration file. Create this file in your project root:
+`sanshain.yaml` in the project root:
 
 ```yaml
-sanshainUrl: http://localhost:3000
 serviceName: my-ts-service
-compression: true
-catalogInfo: catalog-info.yaml    # optional: Backstage file pushed by `sanshain catalog`
-
 provides:
-  - file: src/docs/openapi.yaml   # version is read from the file's info.version
-
+  - file: src/docs/openapi.yaml   # the version is read from info.version
 requires:
   - serviceName: auth-service
-    version: 1.2.0                # exact pin — MAJOR.MINOR.PATCH, no ranges, no latest
+    version: 1.2.0                # an exact pin
     outputDirectory: src/generated/auth
     endpoints:
       - method: GET
         path: /api/v1/users
-      - method: POST
-        path: /api/v1/login
 ```
 
-Every relative path in `sanshain.yaml` (`file`, `openApiFile`, `asyncApiFile`, `protoFile`, `outputDirectory`) is resolved against the directory that contains `sanshain.yaml`, not the current working directory — so `sanshain --config other/dir/sanshain.yaml provide` finds the same files as a run started in `other/dir`. Absolute paths stay as they are.
+With `SANSHAIN_URL` and `SANSHAIN_TOKEN` in the environment:
 
-The provide **version is never configured here** — it is read from the spec file itself (`info.version` for OpenAPI/AsyncAPI, the `// sanshain-version: MAJOR.MINOR.PATCH` comment for proto).
-
-Branch-era fields (`branch`, `timeout`, `baseVersion`, `releaseBranches`) are rejected at parse time with a migration hint. A `requires` entry without a `version` is a hard error — list a producer's available versions with `GET /producers/<name>/versions`.
-
-Any other field the CLI does not know — a typo such as `catalogInf` or `requires[0].outputDirectroy` — is reported once on stderr and ignored:
-
-```
-   /\_/\  ?
-  ( O_o )   sanshain.yaml: unknown field 'catalogInf' - ignored
- ---U-U---
+```bash
+npx sanshain provide          # snapshot (the default)
+npx sanshain provide --ga     # immutable GA, from the release pipeline
+npx sanshain require          # writes src/generated/auth/auth-service.yaml
 ```
 
-The message comes right after the removed-field checks, before any other validation, so it also shows when a typo leads to a follow-up error (such as a missing `version`). With `strict` on, the same message ends in `rejected (strict)` and the command fails, even under best-effort. Fields that other Sanshain clients support (`insecure`, `combine`) are accepted silently.
-
-### AsyncAPI as OpenAPI (`format`)
-
-A `requires` entry with `apiType: asyncapi` may add `format: openapi` to receive the pinned channels rendered as an OpenAPI document, e.g. for an OpenAPI code generator. It is the only supported combination; any other `format` value, or `format` with another `apiType`, is a configuration error. The file keeps its usual name (`<serviceName>.yaml`, or `<serviceName>_bundle.yaml` for several endpoints). To get both formats, list the entry twice with different `outputDirectory` values:
+A `"prebuild": "sanshain require"` script in `package.json` fetches the pinned snippets before every `npm run build`. In GitHub Actions:
 
 ```yaml
-requires:
-  - serviceName: notifier
-    apiType: asyncapi
-    version: 1.2.0
-    outputDirectory: src/generated/notifier
-    endpoints:
-      - method: SUB
-        path: user/signup
-  - serviceName: notifier
-    apiType: asyncapi
-    format: openapi
-    version: 1.2.0
-    outputDirectory: src/generated/notifier-openapi
-    endpoints:
-      - method: SUB
-        path: user/signup
+- uses: paxel/sanshain-js@summer
+  with:
+    command: provide
+    ga: ${{ github.ref == 'refs/heads/main' && 'true' || '' }}
+    trunk: ${{ github.ref == 'refs/heads/main' }}
+  env:
+    SANSHAIN_URL: ${{ vars.SANSHAIN_URL }}
+    SANSHAIN_TOKEN: ${{ secrets.SANSHAIN_TOKEN }}
 ```
-
-`format: openapi` needs Sanshain Service 2.4.0 or later. An older service rejects the single-endpoint request or returns AsyncAPI; the client reports that it needs 2.4.0. It writes nothing and fails with `format: openapi needs Sanshain Service 2.4.0 or later (server is <version>)` (a warning under best-effort).
-
-### Environment Variable Overrides
-
-| Variable                | Description                                                                          |
-|-------------------------|--------------------------------------------------------------------------------------|
-| `SANSHAIN_URL`          | Override `sanshainUrl` (the `--url` flag overrides both)                             |
-| `SANSHAIN_TOKEN`        | Bearer token for authentication                                                      |
-| `SANSHAIN_SERVICE_NAME` | Override `serviceName`                                                               |
-| `SANSHAIN_GA`           | `true` provides as GA instead of snapshot; `false` keeps a snapshot despite `autoGa` |
-| `SANSHAIN_TRUNK`        | Set to `true` on trunk CI (same as `--trunk`)                                        |
-| `SANSHAIN_BEST_EFFORT`  | Set to `true` to continue on errors                                                  |
-| `SANSHAIN_STRICT`       | Set to `true` to fail on missing configuration                                       |
-| `SANSHAIN_FORCE`        | No effect (accepted for compatibility; every provide uploads)                        |
-| `SANSHAIN_COMPRESSION`  | Override `compression`                                                               |
-| `SANSHAIN_SET_<NAME>`   | Fills the `{{NAME}}` placeholders of `annotations` (`--set NAME=value` wins)         |
-
-The URL is taken from the `--url` flag first, then `SANSHAIN_URL`, then `sanshainUrl` in `sanshain.yaml`.
-Boolean switches are on for `true` or `1` (trimmed, any case); any other value is off.
-
-## Snapshot vs. GA (the `ga` switch)
-
-Every provide is a **snapshot** by default: overwritable work-in-progress that expires when unused. To publish an immutable **GA** version, flip the switch explicitly:
-
-```bash
-sanshain provide --ga
-# or
-SANSHAIN_GA=true sanshain provide
-```
-
-There is no git or branch detection — CI simply sets `SANSHAIN_GA=true` on protected-branch pipelines, and that is the whole mechanism. GA versions permanently claim their number; re-providing a GA version with different content is rejected (see below). Publishing GA requires the `releaser` role — without it the server answers `403` and the error names the role and the snapshot fallback.
-
-### autoGa: GA on every trunk or tag build
-
-```yaml
-autoGa: true
-```
-
-With `autoGa: true` in `sanshain.yaml` a provide is GA whenever the build declares a stream: trunk (`--trunk` / `SANSHAIN_TRUNK`) or a tag (`--tag` / `SANSHAIN_TAG`), also when it declares both. Without a stream it stays a snapshot, so a developer's laptop never releases. The first of these that is set decides:
-
-1. `--ga` (it can only say GA);
-2. `SANSHAIN_GA` (an explicit `false` counts; empty or absent does not);
-3. `autoGa: true` with trunk or a tag;
-4. `snapshot`.
-
-There is still no branch detection: CI declares trunk and tag on its protected pipelines only, and that is what makes them GA. The CI token's user needs the `releaser` role, and a trunk build that changes the spec without a version bump fails with `409 immutable_ga` and the proposed version: bump the version in the spec file and build again. A retire never carries a stability, `autoGa` or not. In the GitHub Action leave the `ga` input empty (its default) to let `autoGa` decide.
-
-## Streams: trunk and release branches
-
-Alongside stability, the pipeline declares which dependency graph its calls belong to. Like the
-ga switch this is a property of the invocation and never appears in `sanshain.yaml` (only
-`autoGa` may say what a declared stream means for stability):
-
-```bash
-sanshain provide --trunk        # trunk CI: maintains the main graph (also SANSHAIN_TRUNK=true)
-sanshain provide --tag R1       # release/hotfix pipeline: updates that sanshain-branch (also SANSHAIN_TAG)
-```
-
-The same flags apply to `require` — trunk pins feed the main graph. Declaring both records the
-build in neither graph: the CLI warns
-`trunk and tag are mutually exclusive - this build is recorded in neither` and sends neither
-(under strict it fails before any request). An unknown tag is not created and not an error: the
-call succeeds, recorded only in the dev graph, and Sanshain sends a warning (see
-[Warnings](#warnings)); a releaser must create the branch first.
-
-## Origin: why this build provides
-
-A provide may carry what the pipeline knows about *why* it runs (Sanshain Service 2.9.0 and
-later). Sanshain stores it with the version and shows it on the version row, in the diff and the
-blame:
-
-```bash
-sanshain --tickets ORD-7,ORD-9 --note "Adds the users endpoint" provide
-```
-
-- `--build-url` / `SANSHAIN_BUILD_URL` and `--change-url` / `SANSHAIN_CHANGE_URL` (the pull or
-  merge request) default to the runner's own variables on GitHub Actions (`GITHUB_SERVER_URL`,
-  `GITHUB_REPOSITORY`, `GITHUB_RUN_ID`, a pull request's `GITHUB_REF`), GitLab CI (`CI_JOB_URL`,
-  `CI_MERGE_REQUEST_PROJECT_URL`, `CI_MERGE_REQUEST_IID`) and Jenkins (`BUILD_URL`, `CHANGE_URL`).
-- `--tickets` / `SANSHAIN_TICKETS` (comma-separated ids) and `--note` / `SANSHAIN_NOTE` come only
-  from the pipeline; the GitHub Action takes them as the `tickets` and `note` inputs.
-
-The latest provide that carries any of it wins; a byte-identical re-provide only fills an empty
-origin. Nothing is read from git. A service before 2.9.0 refuses the origin fields; the client then
-warns and repeats the provide without them, so upgrading the client first never fails a build.
-
-A flag wins over its `SANSHAIN_*` variable, which wins over the runner's variable. A blank value
-counts as unset, so an empty flag or variable does not switch the runner's URL off; only unsetting
-the runner variable does. Other CI systems (Azure Pipelines, Bitbucket Pipelines, CircleCI,
-Buildkite, TeamCity, …) fill nothing: set `SANSHAIN_BUILD_URL` and `SANSHAIN_CHANGE_URL` from their
-variables. The service accepts http(s) URLs, at most 20 ticket ids made of letters, digits, `-`, `_`
-and `.`, and a note of at most 200 characters.
-
-`provide --dry-run` sends `dry_run`: Sanshain parses the spec and applies the version rules, and
-stores nothing — the check for a pull request. The GitHub Action has no dry-run input; run the CLI
-for it.
-
-## Annotations
-
-`annotations` in `sanshain.yaml` are named values Sanshain shows with the provided version
-(`scope: version`) or with the system (`scope: system`), for example a link to the requirements
-a build implements and to the system's Jenkins job.
-**Annotations need Sanshain Service 2.13.0 or later.**
-
-```yaml
-annotations:
-  - scope: version
-    name: requirements
-    value: "http://solar.system/id-{{AREA}}/requirements/{{ID}}"
-  - scope: system
-    name: jenkins
-    value: "https://jenkins.corp/job/payments"
-```
-
-Each entry has exactly `scope` (`version` or `system`), `name` and `value`, all strings; a
-missing field, another type or another scope fails before any request, naming the entry. The
-service checks the limits (20 per scope, names of at most 40 letters, digits, `-` and `_`, values
-of at most 2048 characters) and answers `400` naming the entry.
-
-A placeholder `{{NAME}}` (letters, digits and `_` only; `{{ A }}` or `{{a-b}}` stays literal
-text) is filled by the build: `--set NAME=value` (repeatable, split at the first `=`), else the
-environment variable `SANSHAIN_SET_NAME` (exact case). An empty value counts as unset, and an
-empty `--set` does not fall back to the variable:
-
-```bash
-sanshain --set AREA=7 --set ID=42 provide
-# or
-SANSHAIN_SET_AREA=7 SANSHAIN_SET_ID=42 sanshain provide
-```
-
-An entry with an unfilled placeholder is left out with a warning, and the others are sent:
-
-```
-⚠ annotation 'requirements' left out: {{ID}} is not set (--set ID=… or SANSHAIN_SET_ID)
-```
-
-Under strict mode that warning fails the command before any request, also with best-effort.
-
-`provide` sends every entry, also with `--dry-run`; `require` (as the `annotations` query
-parameter), its bundles and `catalog` send only the `system` ones; retiring sends none. An older
-service refuses annotations; the command then repeats the call without them, sends none for the
-rest of the run, and warns once:
-`⚠ Sanshain Service before 2.13.0 does not take annotations; sending without them`
-(strict mode does not fail on this one).
-
-## Retiring a protocol
-
-Removing a `provides` entry tells Sanshain nothing — it cannot distinguish a dropped protocol
-from a pipeline that stopped running. Keep the entry and mark it:
-
-```yaml
-provides:
-  - apiType: asyncapi
-    retired: true
-```
-
-The next `provide` retires that family: the capability tag is cleared, it leaves the current
-dependency graph, and its AsyncAPI channel contracts are released. Version history and existing
-Consumer pins are untouched. Retiring needs the `releaser` role — which a release pipeline
-already holds — or a maintainer grant on the Producer.
-
-> ⚠️ **AsyncAPI 2.x perspective.** Sanshain reads 2.x `publish`/`subscribe` from the
-> **application's** perspective: `publish` means *this service publishes to the channel*,
-> `subscribe` means *this service consumes it*. The AsyncAPI 2.x specification defines those
-> keywords from the **client's** perspective — exactly inverted. Sanshain deliberately uses the
-> application-perspective reading because it matches the unambiguous 3.x `send`/`receive`
-> mapping. A document authored with the spec-literal reading registers its contracts, and has
-> its subscriptions harvested, exactly backwards. Harvested subscriptions are printed after
-> every AsyncAPI provide; those with drift or no publisher yet are warnings and never fail the
-> build.
-
-## Automatic Integration (Recommended)
-
-To make `SanshainJS` behave like the Maven plugin (running automatically during build), add it to your `package.json`:
-
-```json
-"scripts": {
-  "prebuild": "sanshain require",
-  "build": "tsc"
-}
-```
-
-Now, every time you run `npm run build`, it will first download the pinned OpenAPI specs.
-
-## CLI Usage
-
-### Provide
-
-Upload your service's API specification to Sanshain under the version declared in the spec file:
-
-```bash
-sanshain provide          # snapshot (default)
-sanshain provide --ga     # immutable GA
-```
-
-### Require
-
-Download the pinned endpoint snippets and bundles as defined in `sanshain.yaml`:
-
-```bash
-sanshain require
-```
-
-### Catalog
-
-Push the system's Backstage `catalog-info.yaml` (the `catalogInfo` field, relative to `sanshain.yaml`) so Sanshain can show the **Peripheral Resources** — databases, buckets, queues — the Component lists under `spec.dependsOn`. Needs Sanshain Service 2.4.0 or later.
-
-```bash
-sanshain catalog            # updates the dev graph
-sanshain catalog --trunk    # trunk CI: updates the main graph as well
-```
-
-On success the CLI prints the recorded resources:
-
-```
-Catalog recorded for orders-service (main+dev): 1 resources
-  resource:default/orders-db
-```
-
-- Without `catalogInfo` the command warns `No catalogInfo in sanshain.yaml - skipping catalog.` and exits 0 (fails under strict).
-- A file Sanshain cannot read as this project's Component — usually a `metadata.name` that is not the `serviceName` — records nothing and keeps the previous periphery. The CLI prints Sanshain's reason as a warning and exits 0 (fails under strict).
-- A `404` means the service is older than 2.4.0; the CLI checks `GET /version` and names it.
-- Under best-effort every failure is a warning and the command exits 0.
-
-Run it once per build as its own CI step, next to `provide`/`require` — see [CI/CD Integration](docs/ci-integration.md).
-
-## Failure Modes
-
-Sanshain 2.0 fails fast and self-service; the CLI surfaces each case distinctly:
-
-- **`404` (Unknown)**: the producer, or the pinned version, does not exist on the server — in either stability. A configuration error; fix the pin (list available versions: `GET /producers/<name>/versions`). Nothing waits for a version to appear.
-- **`410` (Absent)**: the pinned version exists but deliberately does not include the requested endpoint(s). For bundles, the whole bundle fails and the server names the missing endpoints.
-- **`409` (Version rules)**: the provide was rejected — most commonly "same GA version, different content". The server proposes the next free version, and the CLI prints it prominently:
-
-  ```
-  Provide rejected by the version rules (409): version 1.2.0 is GA and immutable
-  Publish as 1.3.0 — update info.version in src/docs/openapi.yaml
-  ```
-
-  The CLI never modifies your spec files — bump the version yourself and re-run.
-- **Pre-2.0 server**: after a failed provide/require the CLI checks `GET /version` once; if the instance is older than 2.0.0 you get a clear "upgrade the server" message instead of a confusing wire error.
-
-## Caching
-
-### Provide always uploads
-
-`sanshain provide` uploads every spec file on every run; Sanshain treats re-providing byte-identical content as an idempotent no-op, so CI re-runs never fight. `--force`, `force: true` and `SANSHAIN_FORCE` are still accepted but have no effect.
-
-### Require-Side ETag Caching
-
-The CLI stores the `ETag` from require responses and sends `If-None-Match` on subsequent runs. On `304 Not Modified`:
-
-```
-⏭ user-service spec unchanged (304), skipping code generation.
-```
-
-A pin on a GA version can never change content; a pin on a snapshot can — which is exactly what the ETag detects. A `--dry-run` require stores no ETag.
-
-### State File
-
-The local cache is stored at `node_modules/.cache/sanshain/state.json` with the following format:
-
-```json
-{
-  "requires": {
-    "user-service|1.2.0|GET|/api/v1/users": {
-      "etag": "\"sha256:def456...\"",
-      "last_fetched": "2026-04-25T12:00:00Z"
-    }
-  }
-}
-```
-
-A `provides` section written by older clients is ignored.
-
-## Strict Mode
-
-By default, the CLI warns and skips when configuration is incomplete (no `serviceName`, no `provides`, no `requires`, no `catalogInfo`). This makes it safe to include both commands in build scripts even if only one applies.
-
-To fail on missing configuration, enable strict mode:
-
-```yaml
-strict: true
-```
-
-Or via environment variable:
-
-```bash
-export SANSHAIN_STRICT=true
-```
-
-When strict mode is enabled:
-- Missing `serviceName` → exit with error
-- No `provides` configured → exit with error
-- No `requires` configured → exit with error
-- No `catalogInfo` configured (for `sanshain catalog`, which checks only `serviceName` and `catalogInfo`) → exit with error
-- Unknown fields in `sanshain.yaml` → exit with error (best-effort does not soften this)
-- Any warning Sanshain sends, and declaring both trunk and a tag → exit with error (best-effort does not soften this)
-- An annotation with an unfilled placeholder → exit with error before any request (best-effort does not soften this)
-
-## Warnings
-
-The dependency graph is informational and never fails a build. Where Sanshain does not record a
-call in a graph — an unknown `--tag`, a `catalog-info.yaml` it cannot read — the call succeeds
-and Sanshain sends a `Sanshain-Warning` header. The CLI prints each one as `⚠ <text>`, for every
-command and for error responses too, and the build carries on. Under strict mode a warning fails
-the command after the call with `strict: Sanshain warned: <text>` (the first warning, if there
-are several); best-effort does not soften that.
-
-## CI/CD Integration
-
-`SanshainJS` is platform-agnostic. For detailed guides on integrating it into your CI/CD pipeline (GitLab, Jenkins, GitHub Actions, etc.), see:
-
-- [Generic CI/CD Integration Guide](docs/ci-integration.md)
-- [GitHub Actions Specific Guide](docs/github-actions.md)
 
 ## License
 
-This project is licensed under the Apache License 2.0. See the [LICENSE](LICENSE) file for details.
+Apache License 2.0. See [LICENSE](LICENSE).
