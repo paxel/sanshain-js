@@ -47,5 +47,8 @@ runs:
         SANSHAIN_TAG: ${{ inputs.tag || env.SANSHAIN_TAG }}
         SANSHAIN_TICKETS: ${{ inputs.tickets || env.SANSHAIN_TICKETS }}
         SANSHAIN_NOTE: ${{ inputs.note || env.SANSHAIN_NOTE }}
+        # The command reaches bash as data, never as script text: split into words, no globbing.
+        SANSHAIN_ACTION_COMMAND: ${{ inputs.command }}
       run: |
-        npx sanshain ${{ inputs.command }}
+        set -f
+        npx sanshain $SANSHAIN_ACTION_COMMAND

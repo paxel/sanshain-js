@@ -26,7 +26,11 @@ function stepEnv(inputs: Record<string, string>, env: Record<string, string>): R
     }
     return '';
   };
-  return Object.fromEntries(Object.entries<string>(step.env).map(([name, value]) => [name, evaluate(value)]));
+  return Object.fromEntries(
+    Object.entries<string>(step.env)
+      .filter(([name]) => name !== 'SANSHAIN_ACTION_COMMAND')
+      .map(([name, value]) => [name, evaluate(value)])
+  );
 }
 
 const CALLER = {
@@ -39,6 +43,12 @@ const CALLER = {
 };
 
 describe('the Action', () => {
+  it('never puts an input into the script text', () => {
+    expect(step.run).not.toContain('${{');
+    expect(step.env.SANSHAIN_ACTION_COMMAND).toBe('${{ inputs.command }}');
+    expect(step.run).toContain('npx sanshain $SANSHAIN_ACTION_COMMAND');
+  });
+
   it('an empty input keeps what the job or workflow set', () => {
     expect(stepEnv({ command: 'provide' }, CALLER)).toEqual(CALLER);
   });

@@ -25,6 +25,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `--version` reads the version from `package.json` instead of a copy in the CLI that a version bump could leave behind.
 - The build, release and security workflows pin every action to a full commit SHA; they referenced tags.
 
+### Security
+- The Action passes its `command` input to the shell as data, so an expression placed in it can no longer inject shell code.
+
 ---
 
 Historical changes have been moved to [OLDER_CHANGES.md](OLDER_CHANGES.md).
