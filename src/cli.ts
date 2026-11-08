@@ -103,6 +103,14 @@ function annotationsFor(config: any, strict: boolean): Annotation[] {
   return annotations;
 }
 
+/**
+ * The ETag to send as If-None-Match: none when the output file is gone, so the
+ * answer is a 200 that writes it again instead of a 304 that leaves it missing.
+ */
+function etagFor(cache: SanshainCache, key: string, outputFile: string): string | undefined {
+  return fs.existsSync(outputFile) ? cache.getRequireEntry(key)?.etag : undefined;
+}
+
 program
   .name('sanshain')
   .description('Sanshain CLI client for managing OpenAPI specs')
@@ -391,9 +399,11 @@ program
           if (req.endpoints.length === 1) {
             // Single endpoint require
             const endpoint = req.endpoints[0];
-            const cacheKey = SanshainCache.requireKey(req.serviceName, req.version, endpoint.method, endpoint.path, req.format);
-            const cachedEntry = cache.getRequireEntry(cacheKey);
-            const cachedEtag = cachedEntry?.etag;
+            fileName = `${req.serviceName}.${ext}`;
+            const cacheKey = SanshainCache.requireKey(
+              req.serviceName, req.version, endpoint.method, endpoint.path, req.format, req.outputDirectory
+            );
+            const cachedEtag = etagFor(cache, cacheKey, path.join(outputDir, fileName));
 
             const result = await checked(client, strict, () => client.require(
               config.serviceName,
@@ -414,7 +424,6 @@ program
               continue;
             }
 
-            fileName = `${req.serviceName}.${ext}`;
             fs.writeFileSync(path.join(outputDir, fileName), result.content!);
             console.log(`Saved ${fileName} to ${req.outputDirectory}`);
 
@@ -425,9 +434,9 @@ program
             }
           } else {
             // Bundle require
-            const cacheKey = SanshainCache.requireBundleKey(req.serviceName, req.version, req.format);
-            const cachedEntry = cache.getRequireEntry(cacheKey);
-            const cachedEtag = cachedEntry?.etag;
+            fileName = `${req.serviceName}_bundle.${ext}`;
+            const cacheKey = SanshainCache.requireBundleKey(req.serviceName, req.version, req.format, req.outputDirectory);
+            const cachedEtag = etagFor(cache, cacheKey, path.join(outputDir, fileName));
 
             // The bundle takes the stream in the body — the server's bundle
             // handler reads no query parameters.
@@ -447,7 +456,6 @@ program
               continue;
             }
 
-            fileName = `${req.serviceName}_bundle.${ext}`;
             fs.writeFileSync(path.join(outputDir, fileName), result.content!);
             console.log(`Saved ${fileName} to ${req.outputDirectory}`);
 

@@ -1043,6 +1043,64 @@ describe('no provide skip, no dry-run caching', () => {
   });
 });
 
+describe('the require ETag per output directory', () => {
+  const statePath = () => path.join(workDir, 'node_modules/.cache/sanshain/state.json');
+  const entry = (outputDirectory: string) => [
+    '  - serviceName: users',
+    '    version: 1.0.0',
+    `    outputDirectory: ${outputDirectory}`,
+    '    endpoints:',
+    '      - method: GET',
+    '        path: /users'
+  ];
+  const yaml = (...dirs: string[]) =>
+    ['sanshainUrl: http://localhost:3000', 'serviceName: svc', 'requires:', ...dirs.flatMap(entry), ''].join('\n');
+  // A 304 whenever an ETag is sent, as the service answers an unchanged spec.
+  const server = (axios: any) =>
+    axios.get.mockImplementation((_url: string, options: any) =>
+      Promise.resolve(
+        options.headers['If-None-Match']
+          ? { status: 304, data: Buffer.from(''), headers: {} }
+          : { status: 200, data: Buffer.from('paths: {}'), headers: { etag: '"sha256:e1"' } }
+      )
+    );
+
+  it('the same endpoint required into two directories is written to both', async () => {
+    const config = writeProject(yaml('gen/a', 'gen/b'));
+
+    const run = await runCli(['-c', config, 'require'], server);
+
+    expect(run.exitCode).toBeUndefined();
+    expect(fs.readFileSync(path.join(projectDir, 'gen/a/users.yaml'), 'utf8')).toBe('paths: {}');
+    expect(fs.readFileSync(path.join(projectDir, 'gen/b/users.yaml'), 'utf8')).toBe('paths: {}');
+    expect(Object.keys(JSON.parse(fs.readFileSync(statePath(), 'utf8')).requires)).toEqual([
+      'users|1.0.0|GET|/users|out=gen/a',
+      'users|1.0.0|GET|/users|out=gen/b'
+    ]);
+  });
+
+  it('a deleted output file is fetched again instead of being skipped', async () => {
+    const config = writeProject(yaml('gen'));
+    await runCli(['-c', config, 'require'], server);
+    fs.rmSync(path.join(projectDir, 'gen/users.yaml'));
+
+    const run = await runCli(['-c', config, 'require'], server);
+
+    expect(run.axios.get.mock.calls[0][1].headers['If-None-Match']).toBeUndefined();
+    expect(fs.readFileSync(path.join(projectDir, 'gen/users.yaml'), 'utf8')).toBe('paths: {}');
+  });
+
+  it('a present output file still sends the stored ETag', async () => {
+    const config = writeProject(yaml('gen'));
+    await runCli(['-c', config, 'require'], server);
+
+    const run = await runCli(['-c', config, 'require'], server);
+
+    expect(run.axios.get.mock.calls[0][1].headers['If-None-Match']).toBe('"sha256:e1"');
+    expect(run.out).toContain('unchanged (304)');
+  });
+});
+
 describe('format: openapi on asyncapi requires', () => {
   const OPENAPI = 'openapi: 3.0.3\npaths: {}\n';
   const ASYNCAPI = 'asyncapi: 2.6.0\nchannels: {}\n';

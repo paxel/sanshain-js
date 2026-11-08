@@ -56,13 +56,28 @@ export class SanshainCache {
     };
   }
 
-  // A requested format is part of the key, so the two renderings of one
-  // entry never share an ETag; without one the key is unchanged.
-  static requireKey(serviceName: string, version: string, method: string, apiPath: string, format?: string): string {
-    return `${serviceName}|${version}|${method}|${apiPath}${format ? `|${format}` : ''}`;
+  // A requested format and the output directory are part of the key, so
+  // neither the two renderings of one entry nor two directories it is written
+  // to share an ETag; without them the key is unchanged.
+  static requireKey(
+    serviceName: string,
+    version: string,
+    method: string,
+    apiPath: string,
+    format?: string,
+    outputDirectory?: string
+  ): string {
+    return `${serviceName}|${version}|${method}|${apiPath}${format ? `|${format}` : ''}${outputSuffix(outputDirectory)}`;
   }
 
-  static requireBundleKey(serviceName: string, version: string, format?: string): string {
-    return `${serviceName}|${version}|bundle${format ? `|${format}` : ''}`;
+  static requireBundleKey(serviceName: string, version: string, format?: string, outputDirectory?: string): string {
+    return `${serviceName}|${version}|bundle${format ? `|${format}` : ''}${outputSuffix(outputDirectory)}`;
   }
+}
+
+/** The output directory as written in sanshain.yaml, with forward slashes, normalized, no trailing slash. */
+function outputSuffix(outputDirectory?: string): string {
+  if (!outputDirectory) return '';
+  const normalized = path.posix.normalize(outputDirectory.replace(/\\/g, '/'));
+  return `|out=${normalized.length > 1 ? normalized.replace(/\/$/, '') : normalized}`;
 }
