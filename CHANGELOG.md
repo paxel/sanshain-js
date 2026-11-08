@@ -23,6 +23,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - An unknown provide `apiType` fails as a configuration error when `sanshain.yaml` is loaded, also with best effort; the provide reported success without uploading anything.
 - `require --dry-run` writes nothing: neither the output directory nor the file (it wrote the downloaded file).
 - `--version` reads the version from `package.json` instead of a copy in the CLI that a version bump could leave behind.
+- The build, release and security workflows pin every action to a full commit SHA; they referenced tags.
 
 ---
 
