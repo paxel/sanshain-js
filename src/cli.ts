@@ -1,15 +1,18 @@
-import { Command } from 'commander';
+import { Command, InvalidArgumentError } from 'commander';
 import {
   UnknownFieldsError,
   configBaseDir,
   envFlag,
+  fillAnnotations,
   loadConfig,
+  parseSet,
   resolveOrigin,
   resolveStability,
   resolveStreamWithWarning,
   streamDeclared
 } from './config';
 import {
+  Annotation,
   CatalogPushResponse,
   SanshainClient,
   ProvideResponseBody,
@@ -72,6 +75,35 @@ function streamFor(strict: boolean, trunkFlag?: boolean, tagFlag?: string): Stre
   return stream;
 }
 
+/** Collects the repeatable --set NAME=value; a later one for the same NAME wins. */
+function collectSet(arg: string, previous?: Map<string, string>): Map<string, string> {
+  let name: string;
+  let value: string;
+  try {
+    [name, value] = parseSet(arg);
+  } catch (e) {
+    throw new InvalidArgumentError((e as Error).message);
+  }
+  return new Map(previous ?? []).set(name, value);
+}
+
+/**
+ * The annotations of sanshain.yaml with their placeholders filled from --set
+ * and SANSHAIN_SET_*. Every entry left out is a warning; under strict the
+ * first fails the command before any request, and best effort does not
+ * soften that.
+ */
+function annotationsFor(config: any, strict: boolean): Annotation[] {
+  const { annotations, warnings } = fillAnnotations(config.annotations, program.opts().set);
+  for (const warning of warnings) {
+    console.warn(`⚠ ${warning}`);
+  }
+  if (strict && warnings.length > 0) {
+    throw new StrictFailure(`strict: ${warnings[0]}`);
+  }
+  return annotations;
+}
+
 program
   .name('sanshain')
   .description('Sanshain CLI client for managing OpenAPI specs')
@@ -88,7 +120,12 @@ program
   .option('--build-url <url>', "where this build ran (also: SANSHAIN_BUILD_URL; default: the runner's own variable)")
   .option('--change-url <url>', "the pull or merge request behind this build (also: SANSHAIN_CHANGE_URL; default: the runner's own variable)")
   .option('--tickets <ids>', 'ticket ids this build closes, comma-separated (also: SANSHAIN_TICKETS)')
-  .option('--note <text>', 'one line of intent for this provide (also: SANSHAIN_NOTE)');
+  .option('--note <text>', 'one line of intent for this provide (also: SANSHAIN_NOTE)')
+  .option(
+    '--set <NAME=value>',
+    'fill the {{NAME}} placeholders of the annotations in sanshain.yaml; repeatable (also: SANSHAIN_SET_NAME)',
+    collectSet
+  );
 
 program
   .command('provide')
@@ -134,6 +171,7 @@ program
         config.autoGa === true,
         streamDeclared(globalOptions.trunk, globalOptions.tag)
       );
+      const annotations = annotationsFor(config, strict);
 
       if (!config.serviceName) {
         if (strict) {
@@ -180,7 +218,8 @@ program
                 stability,
                 dry_run: options.dryRun,
                 ...stream,
-                ...origin
+                ...origin,
+                annotations
               }, config.compression));
             } else if (effectiveApiType === 'asyncapi') {
               response = await checked(client, strict, () => client.provideAsyncApi({
@@ -189,7 +228,8 @@ program
                 stability,
                 dry_run: options.dryRun,
                 ...stream,
-                ...origin
+                ...origin,
+                annotations
               }, config.compression));
             } else if (effectiveApiType === 'proto' || effectiveApiType === 'grpc') {
               response = await checked(client, strict, () => client.provideProto({
@@ -198,7 +238,8 @@ program
                 stability,
                 dry_run: options.dryRun,
                 ...stream,
-                ...origin
+                ...origin,
+                annotations
               }, config.compression));
             }
           } catch (error: any) {
@@ -338,6 +379,8 @@ program
       const client = new SanshainClient(url, token, insecure);
       const cache = new SanshainCache();
       const stream = streamFor(strict, globalOptions.trunk, globalOptions.tag);
+      // The client sends only the system ones on a require.
+      const annotations = annotationsFor(config, strict);
       const baseDir = configBaseDir(globalOptions.config);
 
       for (const req of config.requires) {
@@ -370,7 +413,8 @@ program
               req.apiType,
               cachedEtag,
               stream,
-              req.format
+              req.format,
+              annotations
             ));
 
             if (result.notModified) {
@@ -402,7 +446,8 @@ program
               endpoints: req.endpoints,
               dry_run: options.dryRun,
               api_type: req.apiType,
-              ...stream
+              ...stream,
+              annotations
             }, config.compression, cachedEtag, req.format));
 
             if (result.notModified) {
@@ -491,6 +536,7 @@ program
       }
 
       const stream = streamFor(strict, globalOptions.trunk, globalOptions.tag);
+      const annotations = annotationsFor(config, strict);
       const catalogPath = path.resolve(configBaseDir(globalOptions.config), config.catalogInfo);
       let content: string;
       try {
@@ -504,7 +550,7 @@ program
       let pushed: CatalogPushResponse | undefined;
       let failure: unknown;
       try {
-        pushed = await client.pushCatalog(config.serviceName, content, stream, config.compression);
+        pushed = await client.pushCatalog(config.serviceName, content, stream, config.compression, annotations);
       } catch (error) {
         failure = error;
       }

@@ -526,6 +526,67 @@ describe('unknown fields (the puzzled cat)', () => {
   });
 });
 
+describe('annotations in sanshain.yaml', () => {
+  const testYamlPath = path.resolve(__dirname, 'test-annotations-sanshain.yaml');
+  let stderr: jest.SpyInstance;
+  const load = (annotations: string, extra = '') => {
+    fs.writeFileSync(testYamlPath, `sanshainUrl: http://localhost:3000\nserviceName: svc\n${extra}annotations:\n${annotations}`);
+    return loadConfig(testYamlPath);
+  };
+
+  beforeEach(() => {
+    stderr = jest.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    stderr.mockRestore();
+    if (fs.existsSync(testYamlPath)) fs.unlinkSync(testYamlPath);
+  });
+
+  it('reads the entries as written, placeholders unfilled', () => {
+    const config = load(
+      '  - scope: version\n    name: requirements\n    value: "http://solar.system/id-{{AREA}}/requirements/{{ID}}"\n' +
+        '  - scope: system\n    name: jenkins\n    value: "https://jenkins.corp/job/payments"\n'
+    );
+    expect(config.annotations).toEqual([
+      { scope: 'version', name: 'requirements', value: 'http://solar.system/id-{{AREA}}/requirements/{{ID}}' },
+      { scope: 'system', name: 'jenkins', value: 'https://jenkins.corp/job/payments' }
+    ]);
+    expect(stderr).not.toHaveBeenCalled();
+  });
+
+  it('an empty list is fine', () => {
+    expect(load('  []\n').annotations).toEqual([]);
+  });
+
+  it('a missing field names the entry', () => {
+    expect(() => load('  - scope: system\n    name: jenkins\n')).toThrow("annotations[0] (jenkins): missing 'value'");
+    expect(() => load('  - scope: system\n    value: x\n')).toThrow("annotations[0]: missing 'name'");
+  });
+
+  it('a value that is not a string is an error, not converted', () => {
+    expect(() => load('  - scope: system\n    name: build\n    value: 42\n')).toThrow("annotations[0] (build): 'value' must be a string");
+    expect(() => load('  - scope: system\n    name: true\n    value: x\n')).toThrow("annotations[0]: 'name' must be a string");
+  });
+
+  it('another scope names the entry', () => {
+    expect(() => load('  - scope: version\n    name: a\n    value: x\n  - scope: global\n    name: b\n    value: y\n')).toThrow(
+      "annotations[1] (b): scope 'global' is not supported — use version or system"
+    );
+  });
+
+  it('a list of something else, or no list, is an error', () => {
+    expect(() => load('  - just text\n')).toThrow('annotations[0]: must be an entry with scope, name and value');
+    expect(() => load('  scope: system\n')).toThrow('Field annotations must be an array');
+  });
+
+  it('an extra key in an entry is an unknown field, failing only under strict', () => {
+    load('  - scope: system\n    name: a\n    value: x\n    colour: red\n');
+    expect(stderr.mock.calls[0][0]).toContain("unknown field 'annotations[0].colour' - ignored");
+    expect(() => load('  - scope: system\n    name: a\n    value: x\n    colour: red\n', 'strict: true\n')).toThrow(UnknownFieldsError);
+  });
+});
+
 describe('Origin resolution (why this build provides)', () => {
   it('knows nothing without options, SANSHAIN_* or runner variables', () => {
     expect(resolveOrigin({}, {})).toEqual({});

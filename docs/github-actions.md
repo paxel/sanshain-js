@@ -69,6 +69,21 @@ Needs `catalogInfo` in `sanshain.yaml` and Sanshain Service 2.4.0 or later:
     trunk: ${{ github.ref == 'refs/heads/main' }}
 ```
 
+### Annotations
+
+The Action has no input for the `{{NAME}}` placeholders of the `annotations` in `sanshain.yaml`; set `SANSHAIN_SET_NAME` variables on the step instead (needs Sanshain Service 2.13.0 or later):
+
+```yaml
+- name: Provide Spec
+  uses: paxel/sanshain/sanshain-js@v3
+  with:
+    command: provide
+    token: ${{ secrets.SANSHAIN_TOKEN }}
+  env:
+    SANSHAIN_SET_AREA: '7'
+    SANSHAIN_SET_ID: ${{ vars.REQUIREMENTS_ID }}
+```
+
 ### Inputs
 
 | Input               | Required | Default | Description                                                                                                                          |

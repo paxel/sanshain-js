@@ -18,7 +18,7 @@ Sanshain (Japanese for "Sunshine") is a specialized REST service designed to man
 - **Consumers pin exact versions.** Every `requires` entry carries a `version`; there is no fallback and nothing waits.
 - **Stability is a switch, not git magic.** Every provide is a `snapshot` unless you explicitly pass `--ga` (or set `SANSHAIN_GA=true`), or `autoGa: true` meets a trunk or tag build.
 
-`sanshain catalog` and `format: openapi` on a require need **Sanshain Service 2.4.0** or later; everything else works with any 2.x service.
+`sanshain catalog` and `format: openapi` on a require need **Sanshain Service 2.4.0** or later, and `annotations` need **Sanshain Service 2.13.0** or later; everything else works with any 2.x service.
 
 If you point this client at a pre-2.0 Sanshain server, it will detect that (one lazy `GET /version` after a failure) and tell you to upgrade the server.
 
@@ -129,6 +129,7 @@ requires:
 | `SANSHAIN_STRICT`       | Set to `true` to fail on missing configuration                                       |
 | `SANSHAIN_FORCE`        | No effect (accepted for compatibility; every provide uploads)                        |
 | `SANSHAIN_COMPRESSION`  | Override `compression`                                                               |
+| `SANSHAIN_SET_<NAME>`   | Fills the `{{NAME}}` placeholders of `annotations` (`--set NAME=value` wins)         |
 
 The URL is taken from the `--url` flag first, then `SANSHAIN_URL`, then `sanshainUrl` in `sanshain.yaml`.
 Boolean switches are on for `true` or `1` (trimmed, any case); any other value is off.
@@ -209,6 +210,54 @@ and `.`, and a note of at most 200 characters.
 `provide --dry-run` sends `dry_run`: Sanshain parses the spec and applies the version rules, and
 stores nothing — the check for a pull request. The GitHub Action has no dry-run input; run the CLI
 for it.
+
+## Annotations
+
+`annotations` in `sanshain.yaml` are named values Sanshain shows with the provided version
+(`scope: version`) or with the system (`scope: system`), for example a link to the requirements
+a build implements and to the system's Jenkins job.
+**Annotations need Sanshain Service 2.13.0 or later.**
+
+```yaml
+annotations:
+  - scope: version
+    name: requirements
+    value: "http://solar.system/id-{{AREA}}/requirements/{{ID}}"
+  - scope: system
+    name: jenkins
+    value: "https://jenkins.corp/job/payments"
+```
+
+Each entry has exactly `scope` (`version` or `system`), `name` and `value`, all strings; a
+missing field, another type or another scope fails before any request, naming the entry. The
+service checks the limits (20 per scope, names of at most 40 letters, digits, `-` and `_`, values
+of at most 2048 characters) and answers `400` naming the entry.
+
+A placeholder `{{NAME}}` (letters, digits and `_` only; `{{ A }}` or `{{a-b}}` stays literal
+text) is filled by the build: `--set NAME=value` (repeatable, split at the first `=`), else the
+environment variable `SANSHAIN_SET_NAME` (exact case). An empty value counts as unset, and an
+empty `--set` does not fall back to the variable:
+
+```bash
+sanshain --set AREA=7 --set ID=42 provide
+# or
+SANSHAIN_SET_AREA=7 SANSHAIN_SET_ID=42 sanshain provide
+```
+
+An entry with an unfilled placeholder is left out with a warning, and the others are sent:
+
+```
+⚠ annotation 'requirements' left out: {{ID}} is not set (--set ID=… or SANSHAIN_SET_ID)
+```
+
+Under strict mode that warning fails the command before any request, also with best-effort.
+
+`provide` sends every entry, also with `--dry-run`; `require` (as the `annotations` query
+parameter), its bundles and `catalog` send only the `system` ones; retiring sends none. An older
+service refuses annotations; the command then repeats the call without them, sends none for the
+rest of the run, and warns once:
+`⚠ Sanshain Service before 2.13.0 does not take annotations; sending without them`
+(strict mode does not fail on this one).
 
 ## Retiring a protocol
 
@@ -363,6 +412,7 @@ When strict mode is enabled:
 - No `catalogInfo` configured (for `sanshain catalog`, which checks only `serviceName` and `catalogInfo`) → exit with error
 - Unknown fields in `sanshain.yaml` → exit with error (best-effort does not soften this)
 - Any warning Sanshain sends, and declaring both trunk and a tag → exit with error (best-effort does not soften this)
+- An annotation with an unfilled placeholder → exit with error before any request (best-effort does not soften this)
 
 ## Warnings
 

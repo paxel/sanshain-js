@@ -105,13 +105,24 @@ A file Sanshain cannot read as this project's Component (usually a `metadata.nam
 
 Every warning Sanshain sends (the `Sanshain-Warning` header, e.g. for an unknown `SANSHAIN_TAG`) is printed in the build log; with `SANSHAIN_STRICT=true` it fails the step.
 
+### Annotations from CI
+
+The `{{NAME}}` placeholders of the `annotations` in `sanshain.yaml` are filled from `SANSHAIN_SET_NAME` variables (or `--set NAME=value`); annotations need Sanshain Service 2.13.0 or later:
+
+```bash
+SANSHAIN_SET_AREA=7 SANSHAIN_SET_ID=$REQUIREMENTS_ID npx sanshain provide
+# or
+npx sanshain --set AREA=7 --set ID=$REQUIREMENTS_ID provide
+```
+
 ## 4. Environment Variables
 
-| Variable         | Description                                                                                                           |
-|------------------|-----------------------------------------------------------------------------------------------------------------------|
-| `SANSHAIN_TOKEN` | **Required**. Your authentication token for the Sanshain Service.                                                     |
-| `SANSHAIN_GA`    | Optional. `true` provides as immutable GA instead of the default snapshot; `false` keeps a snapshot despite `autoGa`. |
-| `SANSHAIN_URL`   | Optional. Overrides the `sanshainUrl` in `sanshain.yaml` (the `--url` flag overrides both).                           |
+| Variable              | Description                                                                                                           |
+|-----------------------|-----------------------------------------------------------------------------------------------------------------------|
+| `SANSHAIN_TOKEN`      | **Required**. Your authentication token for the Sanshain Service.                                                     |
+| `SANSHAIN_GA`         | Optional. `true` provides as immutable GA instead of the default snapshot; `false` keeps a snapshot despite `autoGa`. |
+| `SANSHAIN_URL`        | Optional. Overrides the `sanshainUrl` in `sanshain.yaml` (the `--url` flag overrides both).                           |
+| `SANSHAIN_SET_<NAME>` | Optional. Fills the `{{NAME}}` placeholders of `annotations` in `sanshain.yaml` (`--set NAME=value` wins).            |
 
 Boolean switches (`SANSHAIN_GA`, `SANSHAIN_TRUNK`, `SANSHAIN_BEST_EFFORT`, `SANSHAIN_STRICT`, `SANSHAIN_FORCE`, `SANSHAIN_COMPRESSION`) are on for `true` or `1` (trimmed, any case); any other value is off.
 

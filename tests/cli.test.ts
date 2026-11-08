@@ -251,6 +251,184 @@ describe('autoGa', () => {
   });
 });
 
+describe('annotations', () => {
+  const SPEC = { 'openapi.yaml': 'openapi: 3.0.3\ninfo:\n  version: 1.0.0\n' };
+  const ANNOTATIONS =
+    'annotations:\n' +
+    '  - scope: version\n' +
+    '    name: requirements\n' +
+    '    value: "http://solar.system/id-{{AREA}}/requirements/{{ID}}"\n' +
+    '  - scope: system\n' +
+    '    name: jenkins\n' +
+    '    value: "https://jenkins.corp/job/payments"\n';
+  const yaml = (rest: string) => `sanshainUrl: http://localhost:3000\nserviceName: svc\n${ANNOTATIONS}${rest}`;
+  const REQUIREMENTS = { scope: 'version', name: 'requirements', value: 'http://solar.system/id-7/requirements/42' };
+  const JENKINS = { scope: 'system', name: 'jenkins', value: 'https://jenkins.corp/job/payments' };
+  const UNFILLED = "annotation 'requirements' left out: {{ID}} is not set (--set ID=… or SANSHAIN_SET_ID)";
+  const provideOk = (axios: any) => axios.post.mockResolvedValue({ status: 202, data: PROVIDE_OK, headers: {} });
+
+  it('provide sends every entry, filled from --set and SANSHAIN_SET_*', async () => {
+    process.env.SANSHAIN_SET_ID = '42';
+    const config = writeProject(yaml('provide:\n  file: openapi.yaml\n'), SPEC);
+
+    const run = await runCli(['-c', config, '--set', 'AREA=7', 'provide'], provideOk);
+
+    expect(run.exitCode).toBeUndefined();
+    expect(run.axios.post.mock.calls[0][1].annotations).toEqual([REQUIREMENTS, JENKINS]);
+    expect(run.err).not.toContain('left out');
+  });
+
+  it('a later --set for the same name wins', async () => {
+    const config = writeProject(yaml('provide:\n  file: openapi.yaml\n'), SPEC);
+
+    const run = await runCli(['-c', config, '--set', 'AREA=1', '--set', 'ID=42', '--set', 'AREA=7', 'provide'], provideOk);
+
+    expect(run.axios.post.mock.calls[0][1].annotations).toEqual([REQUIREMENTS, JENKINS]);
+  });
+
+  it('provide --dry-run sends them as a real provide does', async () => {
+    const config = writeProject(yaml('provide:\n  file: openapi.yaml\n'), SPEC);
+
+    const run = await runCli(['-c', config, '--set', 'AREA=7', '--set', 'ID=42', 'provide', '--dry-run'], provideOk);
+
+    expect(run.axios.post.mock.calls[0][1]).toMatchObject({ dry_run: true, annotations: [REQUIREMENTS, JENKINS] });
+  });
+
+  it('an unfilled entry is left out with a warning; the others are sent', async () => {
+    const config = writeProject(yaml('provide:\n  file: openapi.yaml\n'), SPEC);
+
+    const run = await runCli(['-c', config, '--set', 'AREA=7', 'provide'], provideOk);
+
+    expect(run.exitCode).toBeUndefined();
+    expect(run.err).toContain(`⚠ ${UNFILLED}`);
+    expect(run.axios.post.mock.calls[0][1].annotations).toEqual([JENKINS]);
+  });
+
+  it('under strict an unfilled entry fails before any request, also with best-effort', async () => {
+    const config = writeProject(yaml('strict: true\nprovide:\n  file: openapi.yaml\n'), SPEC);
+
+    const run = await runCli(['-c', config, '--best-effort', '--set', 'AREA=7', 'provide'], provideOk);
+
+    expect(run.exitCode).toBe(1);
+    expect(run.err).toContain(`strict: ${UNFILLED}`);
+    expect(run.axios.post).not.toHaveBeenCalled();
+  });
+
+  it('under strict require and catalog fail on it too, before any request', async () => {
+    const config = writeProject(
+      yaml(
+        'strict: true\ncatalogInfo: catalog-info.yaml\nrequires:\n  - serviceName: auth\n    version: 1.0.0\n    outputDirectory: out\n' +
+          '    endpoints:\n      - method: GET\n        path: /x\n'
+      ),
+      { 'catalog-info.yaml': 'kind: Component\n' }
+    );
+
+    const required = await runCli(['-c', config, 'require']);
+    expect(required.exitCode).toBe(1);
+    expect(required.err).toContain("strict: annotation 'requirements' left out: {{AREA}} is not set");
+    expect(required.axios.get).not.toHaveBeenCalled();
+
+    const pushed = await runCli(['-c', config, 'catalog']);
+    expect(pushed.exitCode).toBe(1);
+    expect(pushed.axios.put).not.toHaveBeenCalled();
+  });
+
+  it('a retire sends none', async () => {
+    const config = writeProject(yaml('provides:\n  - apiType: asyncapi\n    retired: true\n'));
+
+    const run = await runCli(['-c', config, '--set', 'AREA=7', '--set', 'ID=42', 'provide'], (axios) => {
+      axios.post.mockResolvedValue({ status: 200, data: '{}', headers: {} });
+    });
+
+    expect(run.exitCode).toBeUndefined();
+    expect(run.axios.post.mock.calls[0][1]).toEqual({ producername: 'svc', retired: true });
+  });
+
+  it('require sends only the system ones, as the annotations query parameter', async () => {
+    const config = writeProject(
+      yaml('requires:\n  - serviceName: auth\n    version: 1.0.0\n    outputDirectory: out\n    endpoints:\n      - method: GET\n        path: /x\n')
+    );
+
+    const run = await runCli(['-c', config, '--set', 'AREA=7', '--set', 'ID=42', 'require', '--dry-run'], (axios) => {
+      axios.get.mockResolvedValue({ status: 200, data: Buffer.from('paths: {}'), headers: {} });
+    });
+
+    expect(run.exitCode).toBeUndefined();
+    const params = run.axios.get.mock.calls[0][1].params;
+    expect(params.dry_run).toBe(true);
+    expect(JSON.parse(params.annotations)).toEqual([JENKINS]);
+  });
+
+  it('a bundle sends only the system ones in the body', async () => {
+    const config = writeProject(
+      yaml(
+        'requires:\n  - serviceName: auth\n    version: 1.0.0\n    outputDirectory: out\n    endpoints:\n' +
+          '      - method: GET\n        path: /x\n      - method: GET\n        path: /y\n'
+      )
+    );
+
+    const run = await runCli(['-c', config, 'require'], (axios) => {
+      axios.post.mockResolvedValue({ status: 200, data: Buffer.from('paths: {}'), headers: {} });
+    });
+
+    expect(run.exitCode).toBeUndefined();
+    expect(run.axios.post.mock.calls[0][0]).toBe('/require-bundle');
+    expect(run.axios.post.mock.calls[0][1].annotations).toEqual([JENKINS]);
+  });
+
+  it('catalog sends only the system ones in the body', async () => {
+    const config = writeProject(yaml('catalogInfo: catalog-info.yaml\n'), { 'catalog-info.yaml': 'kind: Component\n' });
+
+    const run = await runCli(['-c', config, 'catalog'], (axios) => {
+      axios.put.mockResolvedValue({ status: 200, data: JSON.stringify({ system: 'svc', trunk: false, resources: [] }), headers: {} });
+    });
+
+    expect(run.exitCode).toBeUndefined();
+    expect(run.axios.put.mock.calls[0][1]).toEqual({ catalog_info_yaml: 'kind: Component\n', annotations: [JENKINS] });
+  });
+
+  it('an older service refusing them: the provide is repeated without them and the warning does not fail strict', async () => {
+    const config = writeProject(
+      yaml('strict: true\nprovides:\n  - file: openapi.yaml\n  - file: asyncapi.yaml\n    apiType: asyncapi\n'),
+      { ...SPEC, 'asyncapi.yaml': 'asyncapi: 3.0.0\ninfo:\n  version: 1.0.0\n' }
+    );
+
+    const run = await runCli(['-c', config, '--set', 'AREA=7', '--set', 'ID=42', 'provide'], (axios) => {
+      axios.post
+        .mockRejectedValueOnce({
+          response: {
+            status: 422,
+            data:
+              'Failed to deserialize the JSON body into the target type: unknown field `annotations`, expected one of ' +
+              '`producername`, `openapi_yaml`, `stability`, `build_url`, `change_url`, `tickets`, `note`, `dry_run`, `trunk`, `tag`',
+            headers: {}
+          }
+        })
+        .mockResolvedValue({ status: 202, data: PROVIDE_OK, headers: {} });
+    });
+
+    expect(run.exitCode).toBeUndefined();
+    expect(run.axios.post).toHaveBeenCalledTimes(3);
+    expect(run.axios.post.mock.calls[0][1].annotations).toEqual([REQUIREMENTS, JENKINS]);
+    expect(run.axios.post.mock.calls[1][1]).not.toHaveProperty('annotations');
+    expect(run.axios.post.mock.calls[2][1]).not.toHaveProperty('annotations');
+    expect(run.err.split('Sanshain Service before 2.13.0 does not take annotations; sending without them')).toHaveLength(2);
+  });
+
+  it('--set without = is refused', async () => {
+    const config = writeProject(yaml('provide:\n  file: openapi.yaml\n'), SPEC);
+    const stderr = jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    try {
+      const run = await runCli(['-c', config, '--set', 'AREA', 'provide'], provideOk);
+      expect(run.exitCode).toBe(1);
+      expect(stderr.mock.calls.map((c) => String(c[0])).join('')).toContain("expected NAME=value, got 'AREA'");
+      expect(run.axios.post).not.toHaveBeenCalled();
+    } finally {
+      stderr.mockRestore();
+    }
+  });
+});
+
 describe('paths relative to sanshain.yaml', () => {
   it('provide reads the spec file next to the config, not in the working directory', async () => {
     const config = writeProject(
