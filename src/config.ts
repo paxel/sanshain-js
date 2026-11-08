@@ -452,6 +452,9 @@ function validateConfig(config: any): void {
 
   const validateProvide = (p: any, index?: number) => {
     const context = index !== undefined ? `provides[${index}]` : 'provide';
+    if (p.apiType !== undefined && !API_TYPES.includes(p.apiType)) {
+      throw new Error(`${context}: ${unsupportedApiType(p.apiType)}`);
+    }
     // A retired entry names its family via apiType alone: the project no
     // longer provides it, so demanding a spec file would force a dead file to
     // stay on disk forever.

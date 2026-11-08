@@ -110,6 +110,19 @@ requires:
     }
   });
 
+  it('should reject an unknown provide apiType, also on a retired entry', () => {
+    writeConfig('sanshainUrl: http://localhost:3000\nserviceName: test-service\nprovides:\n  - file: api.raml\n    apiType: raml\n');
+    expect(() => loadConfig(testYamlPath)).toThrow(
+      "provides[0]: unsupported apiType 'raml' — use openapi, asyncapi or proto (grpc means proto)"
+    );
+    writeConfig('sanshainUrl: http://localhost:3000\nserviceName: test-service\nprovide:\n  retired: true\n  apiType: soap\n');
+    expect(() => loadConfig(testYamlPath)).toThrow("provide: unsupported apiType 'soap'");
+    for (const apiType of ['openapi', 'asyncapi', 'proto', 'grpc']) {
+      writeConfig(`sanshainUrl: http://localhost:3000\nserviceName: test-service\nprovides:\n  - file: spec\n    apiType: ${apiType}\n`);
+      expect(loadConfig(testYamlPath).provides?.[0].apiType).toBe(apiType);
+    }
+  });
+
   it('should reject a non-exact version pin', () => {
     writeConfig(`
 sanshainUrl: http://localhost:3000

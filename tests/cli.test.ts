@@ -645,6 +645,21 @@ describe('best effort softens failed calls only', () => {
   });
 });
 
+describe('an unknown provide apiType', () => {
+  it('fails before any call instead of reporting success, also with best effort', async () => {
+    const config = writeProject('sanshainUrl: http://localhost:3000\nserviceName: svc\nprovides:\n  - file: api.raml\n    apiType: raml\n', {
+      'api.raml': '#%RAML 1.0\n'
+    });
+
+    const run = await runCli(['-c', config, '--best-effort', 'provide']);
+
+    expect(run.exitCode).toBe(1);
+    expect(run.err).toContain("provides[0]: unsupported apiType 'raml'");
+    expect(run.out).not.toContain('Successfully provided');
+    expect(run.axios.post).not.toHaveBeenCalled();
+  });
+});
+
 describe('SANSHAIN_URL precedence', () => {
   const yaml = 'sanshainUrl: http://from-yaml\nserviceName: svc\nprovide:\n  file: openapi.yaml\n';
   const ok = (axios: any) => axios.post.mockResolvedValue({ status: 202, data: PROVIDE_OK, headers: {} });
