@@ -386,7 +386,8 @@ program
       for (const req of config.requires) {
         const outputDir = path.resolve(baseDir, req.outputDirectory);
 
-        if (!fs.existsSync(outputDir)) {
+        // A dry run writes nothing, not even the directory.
+        if (!options.dryRun && !fs.existsSync(outputDir)) {
           fs.mkdirSync(outputDir, { recursive: true });
         }
 
@@ -424,11 +425,14 @@ program
               continue;
             }
 
+            if (options.dryRun) {
+              console.log(`Dry run - ${fileName} not written to ${req.outputDirectory}`);
+              continue;
+            }
             fs.writeFileSync(path.join(outputDir, fileName), result.content!);
             console.log(`Saved ${fileName} to ${req.outputDirectory}`);
 
-            // A dry run records nothing, locally either.
-            if (result.etag && !options.dryRun) {
+            if (result.etag) {
               cache.updateRequireEntry(cacheKey, result.etag);
               cache.save();
             }
@@ -456,11 +460,14 @@ program
               continue;
             }
 
+            if (options.dryRun) {
+              console.log(`Dry run - ${fileName} not written to ${req.outputDirectory}`);
+              continue;
+            }
             fs.writeFileSync(path.join(outputDir, fileName), result.content!);
             console.log(`Saved ${fileName} to ${req.outputDirectory}`);
 
-            // A dry run records nothing, locally either.
-            if (result.etag && !options.dryRun) {
+            if (result.etag) {
               cache.updateRequireEntry(cacheKey, result.etag);
               cache.save();
             }

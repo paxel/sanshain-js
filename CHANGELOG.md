@@ -21,6 +21,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - An empty Action input (`ga`, `trunk`, `tag`, `tickets`, `note`) keeps the `SANSHAIN_*` variable the job or workflow set instead of overriding it with an empty value; `trunk` now defaults to empty instead of `'false'`.
 - An unknown `requires[].apiType` fails as a configuration error when `sanshain.yaml` is loaded, before any call; it was sent to `/require` as OpenAPI.
 - An unknown provide `apiType` fails as a configuration error when `sanshain.yaml` is loaded, also with best effort; the provide reported success without uploading anything.
+- `require --dry-run` writes nothing: neither the output directory nor the file (it wrote the downloaded file).
 
 ---
 

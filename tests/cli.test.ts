@@ -1033,15 +1033,31 @@ describe('no provide skip, no dry-run caching', () => {
     axios.get.mockResolvedValue({ status: 200, data: Buffer.from('paths: {}'), headers: { etag: '"sha256:e1"' } });
   const sentEtag = (run: RunResult) => run.axios.get.mock.calls[0][1].headers['If-None-Match'];
 
-  it('a dry-run require records no ETag', async () => {
+  it('a dry-run require records no ETag and writes nothing', async () => {
     const config = writeProject(REQUIRE_YAML);
 
     const dry = await runCli(['-c', config, 'require', '--dry-run'], withEtag);
     expect(dry.exitCode).toBeUndefined();
+    expect(dry.axios.get.mock.calls[0][1].params.dry_run).toBe(true);
     expect(fs.existsSync(statePath())).toBe(false);
+    expect(fs.existsSync(path.join(projectDir, 'gen'))).toBe(false);
+    expect(dry.out).toContain('Dry run - users.yaml not written to gen');
 
     const real = await runCli(['-c', config, 'require'], withEtag);
     expect(sentEtag(real)).toBeUndefined();
+  });
+
+  it('a dry-run bundle writes nothing either', async () => {
+    const config = writeProject(REQUIRE_YAML + '      - method: POST\n        path: /users\n');
+
+    const dry = await runCli(['-c', config, 'require', '--dry-run'], (axios) =>
+      axios.post.mockResolvedValue({ status: 200, data: Buffer.from('paths: {}'), headers: { etag: '"sha256:e1"' } })
+    );
+
+    expect(dry.exitCode).toBeUndefined();
+    expect(dry.axios.post.mock.calls[0][1].dry_run).toBe(true);
+    expect(fs.existsSync(path.join(projectDir, 'gen'))).toBe(false);
+    expect(fs.existsSync(statePath())).toBe(false);
   });
 
   it('a normal require still sends the stored ETag as If-None-Match', async () => {
