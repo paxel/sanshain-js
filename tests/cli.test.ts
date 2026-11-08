@@ -536,6 +536,115 @@ describe('apiType grpc on a require', () => {
   });
 });
 
+describe('best effort softens failed calls only', () => {
+  const OPENAPI = 'openapi: 3.0.3\ninfo:\n  version: 1.0.0\n';
+  const ASYNCAPI = 'asyncapi: 2.6.0\ninfo:\n  version: 1.0.0\n';
+  const boom = { response: { status: 500, data: Buffer.from('{"error":"boom"}'), headers: {} } };
+  const noVersionEndpoint = (axios: any) => axios.get.mockRejectedValue(new Error('unreachable'));
+
+  it('a failed provide warns and the next entry is still provided', async () => {
+    const config = writeProject(
+      'sanshainUrl: http://localhost:3000\nserviceName: svc\nprovides:\n  - file: openapi.yaml\n  - file: asyncapi.yaml\n    apiType: asyncapi\n',
+      { 'openapi.yaml': OPENAPI, 'asyncapi.yaml': ASYNCAPI }
+    );
+    const mock = (axios: any) => {
+      noVersionEndpoint(axios);
+      axios.post.mockImplementation((url: string) =>
+        url === '/provide' ? Promise.reject(boom) : Promise.resolve({ status: 202, data: PROVIDE_OK, headers: {} })
+      );
+    };
+
+    const run = await runCli(['-c', config, '--best-effort', 'provide'], mock);
+
+    expect(run.exitCode).toBeUndefined();
+    expect(run.err).toContain('Error providing spec: Request failed with status 500');
+    expect(run.err).toContain('Continuing (best effort)');
+    expect(run.axios.post.mock.calls.map((c: any[]) => c[0])).toEqual(['/provide', '/provide/asyncapi']);
+    expect(run.out).toContain('✓ Provided svc 1.0.0');
+    expect(run.out).not.toContain('Successfully provided');
+
+    const strict = await runCli(['-c', config, 'provide'], mock);
+    expect(strict.exitCode).toBe(1);
+    expect(strict.axios.post).toHaveBeenCalledTimes(1);
+  });
+
+  it('a failed require warns and the next entry is still written', async () => {
+    const config = writeProject(
+      [
+        'sanshainUrl: http://localhost:3000',
+        'serviceName: svc',
+        'requires:',
+        '  - serviceName: ghost',
+        '    version: 1.0.0',
+        '    outputDirectory: gen',
+        '    endpoints:',
+        '      - method: GET',
+        '        path: /x',
+        '  - serviceName: users',
+        '    version: 1.0.0',
+        '    outputDirectory: gen',
+        '    endpoints:',
+        '      - method: GET',
+        '        path: /y',
+        ''
+      ].join('\n')
+    );
+
+    const run = await runCli(['-c', config, '--best-effort', 'require'], (axios) => {
+      axios.get.mockImplementation((url: string, options: any) =>
+        url === '/version'
+          ? Promise.reject(new Error('unreachable'))
+          : options.params.producername === 'ghost'
+            ? Promise.reject(boom)
+            : Promise.resolve({ status: 200, data: Buffer.from('paths: {}'), headers: {} })
+      );
+    });
+
+    expect(run.exitCode).toBeUndefined();
+    expect(run.err).toContain('Error requiring ghost 1.0.0');
+    expect(fs.readFileSync(path.join(projectDir, 'gen/users.yaml'), 'utf8')).toBe('paths: {}');
+  });
+
+  const broken: Record<string, string | null> = {
+    unreadable: null,
+    invalid: 'sanshainUrl: http://localhost:3000\nserviceName: svc\nrequires:\n  - serviceName: users\n    outputDirectory: gen\n    endpoints:\n      - method: GET\n        path: /x\n',
+    '1.x field': 'sanshainUrl: http://localhost:3000\nserviceName: svc\nreleaseBranches: [main]\n',
+    'bestEffort in the file': 'sanshainUrl: http://localhost:3000\nserviceName: svc\nbestEffort: true\ntimeout: 30\n'
+  };
+  for (const command of ['provide', 'require', 'catalog']) {
+    for (const [name, yaml] of Object.entries(broken)) {
+      it(`${command}: a broken sanshain.yaml (${name}) fails also with best effort`, async () => {
+        const config = yaml === null ? path.join(projectDir, 'sanshain.yaml') : writeProject(yaml);
+        process.env.SANSHAIN_BEST_EFFORT = 'true';
+
+        const run = await runCli(['-c', config, '--best-effort', command]);
+
+        expect(run.exitCode).toBe(1);
+        expect(run.err).not.toContain('Continuing (best effort)');
+        expect(run.axios.post).not.toHaveBeenCalled();
+        expect(run.axios.get).not.toHaveBeenCalled();
+        expect(run.axios.put).not.toHaveBeenCalled();
+      });
+    }
+  }
+
+  it.each([
+    ['provide', 'strict: true\n', 'serviceName is required'],
+    ['require', 'strict: true\n', 'serviceName is required'],
+    ['catalog', 'strict: true\n', 'serviceName is required'],
+    ['provide', 'strict: true\nserviceName: svc\n', 'No provide section'],
+    ['require', 'strict: true\nserviceName: svc\n', 'No requires configured'],
+    ['catalog', 'strict: true\nserviceName: svc\n', 'no catalogInfo']
+  ])('%s: missing configuration under strict fails also with best effort', async (command, yaml, message) => {
+    const config = writeProject('sanshainUrl: http://localhost:3000\n' + yaml);
+
+    const run = await runCli(['-c', config, '--best-effort', command]);
+
+    expect(run.exitCode).toBe(1);
+    expect(run.err).toContain(message);
+  });
+});
+
 describe('SANSHAIN_URL precedence', () => {
   const yaml = 'sanshainUrl: http://from-yaml\nserviceName: svc\nprovide:\n  file: openapi.yaml\n';
   const ok = (axios: any) => axios.post.mockResolvedValue({ status: 202, data: PROVIDE_OK, headers: {} });
@@ -576,7 +685,7 @@ describe('SANSHAIN_BEST_EFFORT on the command line', () => {
 });
 
 describe('unknown fields on the command line', () => {
-  it('the cat shows on the best-effort fallback when a later validation error follows', async () => {
+  it('the cat shows when a later validation error follows, which best effort does not soften', async () => {
     const config = writeProject(
       [
         'sanshainUrl: http://localhost:3000',
@@ -594,7 +703,7 @@ describe('unknown fields on the command line', () => {
 
     const run = await runCli(['-c', config, '--best-effort', 'require']);
 
-    expect(run.exitCode).toBeUndefined();
+    expect(run.exitCode).toBe(1);
     expect(run.err).toContain("sanshain.yaml: unknown field 'requires[0].verison' - ignored");
     expect(run.err).toContain("missing 'version'");
   });

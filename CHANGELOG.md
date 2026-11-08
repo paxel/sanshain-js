@@ -15,6 +15,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - The Action's inputs table in `docs/github-actions.md` now lists `trunk`, `tag`, `tickets` and `note`.
 - The examples in `docs/github-actions.md` name the Action `paxel/sanshain-js@summer`, a ref that exists; the ones before did not resolve.
 - A require with `apiType: grpc` goes to `/require/grpc` and is saved as `.proto`, and its bundle sends `api_type: proto`; it went to `/require` and was saved as `.yaml`.
+- Best effort softens failed calls only, the same in provide, require and catalog: a `sanshain.yaml` that cannot be loaded (missing, unparsable, invalid or with 1.x fields) now fails also with best effort, and a failed provide no longer stops the next `provides` entry.
 
 ---
 

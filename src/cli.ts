@@ -1,6 +1,5 @@
 import { Command, InvalidArgumentError } from 'commander';
 import {
-  UnknownFieldsError,
   configBaseDir,
   envFlag,
   fillAnnotations,
@@ -135,18 +134,8 @@ program
     let config: any = { bestEffort: false };
     try {
       const globalOptions = program.opts();
-      try {
-        config = loadConfig(globalOptions.config);
-      } catch (e) {
-        const bestEffort = globalOptions.bestEffort || envFlag('SANSHAIN_BEST_EFFORT');
-        // Strict rejecting unknown fields is a config error best-effort never softens.
-        if (bestEffort && !(e instanceof UnknownFieldsError)) {
-          console.warn(`Warning loading config: ${(e as Error).message}`);
-          config = { bestEffort: true, sanshainUrl: 'http://localhost:8080' };
-        } else {
-          throw e;
-        }
-      }
+      // A broken sanshain.yaml is a configuration error: best effort covers failed calls only.
+      config = loadConfig(globalOptions.config);
 
       if (globalOptions.bestEffort) config.bestEffort = true;
       if (envFlag('SANSHAIN_BEST_EFFORT')) config.bestEffort = true;
@@ -198,10 +187,25 @@ program
       const client = new SanshainClient(url, token, insecure);
       const baseDir = configBaseDir(globalOptions.config);
       let provided = false;
+      let failed = false;
+
+      // One provide or retire of this run. Under best effort its failure is a
+      // warning and the next entry still runs, as require does per entry.
+      const each = async (step: () => Promise<void>) => {
+        try {
+          await step();
+        } catch (error: any) {
+          if (!bestEffort || error instanceof StrictFailure) throw error;
+          console.error(`Error providing spec: ${error.message}`);
+          console.warn('Continuing (best effort)');
+          failed = true;
+        }
+      };
 
       const provideFile = async (filePath: string, apiType?: string) => {
         const specPath = path.resolve(baseDir, filePath);
         if (fs.existsSync(specPath)) {
+          provided = true;
           const content = fs.readFileSync(specPath, 'utf8');
           const effectiveApiType = apiType || 'openapi';
           // No local skip-if-unchanged: every provide uploads, and the server
@@ -273,8 +277,6 @@ program
               }
             }
           }
-
-          provided = true;
         } else {
           console.error(`Spec file not found: ${specPath}`);
           if (!bestEffort) throw new Error(`Spec file not found: ${specPath}`);
@@ -283,6 +285,7 @@ program
 
       const retireFamily = async (apiType?: string) => {
         const family = apiType || 'openapi';
+        provided = true;
         console.log(`Retiring ${family} for ${config.serviceName}...`);
         const shed = await checked(client, strict, () => client.retire(config.serviceName, family, options.dryRun));
         const cleared = shed?.tag_cleared ? `: cleared the '${shed.tag_cleared}' capability` : '';
@@ -290,21 +293,20 @@ program
           `✓ Retired${cleared}, closed ${shed?.trunk_pins_closed ?? 0} trunk pin(s), released ` +
             `${shed?.contracts_released ?? 0} contract(s). History and existing pins are untouched.`
         );
-        provided = true;
       };
 
       for (const p of provides) {
         if (p.retired) {
-          await retireFamily(p.apiType);
+          await each(() => retireFamily(p.apiType));
           continue;
         }
         if (p.file) {
-          await provideFile(p.file, p.apiType);
+          await each(() => provideFile(p.file, p.apiType));
         }
         // Backward compatibility
-        if (p.openApiFile) await provideFile(p.openApiFile, 'openapi');
-        if (p.asyncApiFile) await provideFile(p.asyncApiFile, 'asyncapi');
-        if (p.protoFile) await provideFile(p.protoFile, 'proto');
+        if (p.openApiFile) await each(() => provideFile(p.openApiFile, 'openapi'));
+        if (p.asyncApiFile) await each(() => provideFile(p.asyncApiFile, 'asyncapi'));
+        if (p.protoFile) await each(() => provideFile(p.protoFile, 'proto'));
       }
 
       if (!provided) {
@@ -313,7 +315,7 @@ program
           process.exit(1);
         }
         console.warn('⚠ No specification files found to provide. Skipping. Set strict: true to fail in this case.');
-      } else {
+      } else if (!failed) {
         console.log('Successfully provided spec(s).');
       }
     } catch (error: any) {
@@ -334,18 +336,8 @@ program
     let config: any = { bestEffort: false };
     try {
       const globalOptions = program.opts();
-      try {
-        config = loadConfig(globalOptions.config);
-      } catch (e) {
-        const bestEffort = globalOptions.bestEffort || envFlag('SANSHAIN_BEST_EFFORT');
-        // Strict rejecting unknown fields is a config error best-effort never softens.
-        if (bestEffort && !(e instanceof UnknownFieldsError)) {
-          console.warn(`Warning loading config: ${(e as Error).message}`);
-          config = { bestEffort: true, sanshainUrl: 'http://localhost:8080' };
-        } else {
-          throw e;
-        }
-      }
+      // A broken sanshain.yaml is a configuration error: best effort covers failed calls only.
+      config = loadConfig(globalOptions.config);
 
       if (globalOptions.bestEffort) config.bestEffort = true;
       if (envFlag('SANSHAIN_BEST_EFFORT')) config.bestEffort = true;
@@ -495,18 +487,8 @@ program
     let config: any = { bestEffort: false };
     try {
       const globalOptions = program.opts();
-      try {
-        config = loadConfig(globalOptions.config);
-      } catch (e) {
-        const bestEffort = globalOptions.bestEffort || envFlag('SANSHAIN_BEST_EFFORT');
-        // Strict rejecting unknown fields is a config error best-effort never softens.
-        if (bestEffort && !(e instanceof UnknownFieldsError)) {
-          console.warn(`Warning loading config: ${(e as Error).message}`);
-          config = { bestEffort: true, sanshainUrl: 'http://localhost:8080' };
-        } else {
-          throw e;
-        }
-      }
+      // A broken sanshain.yaml is a configuration error: best effort covers failed calls only.
+      config = loadConfig(globalOptions.config);
 
       if (globalOptions.bestEffort) config.bestEffort = true;
       if (envFlag('SANSHAIN_BEST_EFFORT')) config.bestEffort = true;
