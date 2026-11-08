@@ -87,6 +87,29 @@ requires:
     );
   });
 
+  it('should reject an unknown requires apiType, and take every provide spelling', () => {
+    const entry = (apiType: string) => `
+sanshainUrl: http://localhost:3000
+serviceName: test-service
+requires:
+  - serviceName: user-service
+    apiType: ${apiType}
+    version: 1.0.0
+    outputDirectory: gen
+    endpoints:
+      - method: GET
+        path: /api
+`;
+    writeConfig(entry('graphql'));
+    expect(() => loadConfig(testYamlPath)).toThrow(
+      "requires[0] (user-service): unsupported apiType 'graphql' — use openapi, asyncapi or proto (grpc means proto)"
+    );
+    for (const apiType of ['openapi', 'asyncapi', 'proto', 'grpc']) {
+      writeConfig(entry(apiType));
+      expect(loadConfig(testYamlPath).requires?.[0].apiType).toBe(apiType);
+    }
+  });
+
   it('should reject a non-exact version pin', () => {
     writeConfig(`
 sanshainUrl: http://localhost:3000

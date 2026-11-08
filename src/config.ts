@@ -435,6 +435,13 @@ function rejectLegacyFields(config: any): void {
   }
 }
 
+/** The apiType spellings provides and requires take; grpc means proto. */
+const API_TYPES: unknown[] = ['openapi', 'asyncapi', 'proto', 'grpc'];
+
+function unsupportedApiType(apiType: unknown): string {
+  return `unsupported apiType '${apiType}' — use openapi, asyncapi or proto (grpc means proto)`;
+}
+
 function validateConfig(config: any): void {
   if (!config.sanshainUrl) {
     throw new Error('Missing required field: sanshainUrl');
@@ -477,6 +484,9 @@ function validateConfig(config: any): void {
         throw new Error(`Missing serviceName in requires[${index}]`);
       }
       const context = `requires[${index}] (${req.serviceName})`;
+      if (req.apiType !== undefined && !API_TYPES.includes(req.apiType)) {
+        throw new Error(`${context}: ${unsupportedApiType(req.apiType)}`);
+      }
       if (req.format !== undefined && (req.format !== 'openapi' || req.apiType !== 'asyncapi')) {
         throw new Error(
           `${context}: format '${req.format}' with apiType '${req.apiType ?? 'openapi'}' is not supported — ` +
