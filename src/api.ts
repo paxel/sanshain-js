@@ -274,6 +274,9 @@ export function warningsOf(response: any): string[] {
   return Array.isArray(value) ? value.map(String) : [String(value)];
 }
 
+/** The text of the service's 403 when the caller lacks the releaser role. */
+const RELEASER_REFUSAL = "requires the 'releaser' role";
+
 interface ErrorBody {
   error?: string;
   proposed_version?: string;
@@ -467,7 +470,10 @@ export class SanshainClient {
         `Absent endpoint (410): ${serverMessage} — the pinned version exists but deliberately does not include the requested endpoint(s).`
       );
     }
-    if (status === 403) {
+    // Only the refusal for want of the role gets the hint: both service
+    // messages (GA provide, retire) contain this text. Any other 403, such as
+    // a read-only token's, already says what to do.
+    if (status === 403 && serverMessage.includes(RELEASER_REFUSAL)) {
       // The remedy is a role grant — nothing the Producer can change in its
       // own repository — so the message has to name it.
       return new Error(
@@ -477,6 +483,9 @@ export class SanshainClient {
           '(administrators and root always hold it), or publish as a snapshot by leaving ' +
           '--ga / SANSHAIN_GA unset and autoGa off (or setting SANSHAIN_GA=false).'
       );
+    }
+    if (status === 403) {
+      return new Error(`Refused (403): ${serverMessage}`);
     }
     return new Error(`Request failed with status ${status}: ${sanitize(bodyText)}`);
   }

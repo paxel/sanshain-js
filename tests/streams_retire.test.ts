@@ -164,6 +164,24 @@ describe('retire', () => {
     });
     await expect(client.retire('svc')).rejects.toThrow(/maintainer/);
   });
+
+  it("any other 403 shows the service's message alone", async () => {
+    mockedAxios.get.mockResolvedValue({ status: 200, data: JSON.stringify({ version: '2.13.0' }), headers: {} });
+    const readOnly =
+      "this API token has scope 'read_only' and may not change the catalog; create a token with scope 'full' for provide, require and catalog pushes";
+    mockedAxios.post.mockRejectedValue({
+      response: { status: 403, data: JSON.stringify({ error: readOnly }), headers: {} }
+    });
+
+    const retired = client.retire('svc');
+    await expect(retired).rejects.toThrow(`Refused (403): ${readOnly}`);
+    await expect(retired).rejects.not.toThrow(/releaser|maintainer|SANSHAIN_GA/);
+    mockedAxios.post.mockRejectedValue({
+      response: { status: 403, data: JSON.stringify({ error: readOnly }), headers: {} }
+    });
+    await expect(client.provide({ producername: 'svc', openapi_yaml: 'openapi: 3.0.3\n', stability: 'snapshot' }))
+      .rejects.toThrow(new Error(`Refused (403): ${readOnly}`));
+  });
 });
 
 describe('line endings', () => {
