@@ -288,6 +288,41 @@ describe('Sanshain-Warning collection', () => {
     });
   });
 
+  it('over real HTTP the token travels only in the Authorization header, never in a URL', async () => {
+    const http = require('http');
+    const realAxios = jest.requireActual('axios');
+    const seen: { url: string; authorization?: string }[] = [];
+    const server = http.createServer((req: any, res: any) => {
+      seen.push({ url: req.url, authorization: req.headers.authorization });
+      res.statusCode = req.method === 'GET' ? 200 : req.method === 'PUT' ? 200 : 202;
+      res.end(
+        req.method === 'PUT'
+          ? JSON.stringify({ system: 's', trunk: false, resources: [] })
+          : JSON.stringify({ version: '1.0.0', stability: 'snapshot', content_hash: 'h', changes: {} })
+      );
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    try {
+      mockedAxios.create.mockImplementation((config: any) => realAxios.create(config));
+      const client = new SanshainClient(`http://127.0.0.1:${server.address().port}`, 'san_secret');
+      await client.provide({ producername: 'p', openapi_yaml: 'x', stability: 'snapshot' });
+      await client.require('c', 'p', '1.0.0', '/x', 'GET', false, undefined, undefined, { trunk: true }, undefined, [
+        { scope: 'system', name: 'team', value: 'blue' }
+      ]);
+      await client.pushCatalog('s', 'x');
+
+      expect(seen).toHaveLength(3);
+      for (const request of seen) {
+        expect(request.authorization).toBe('Bearer san_secret');
+        expect(request.url).not.toContain('san_secret');
+      }
+      expect(seen[1].url).toContain('annotations=');
+    } finally {
+      mockedAxios.create.mockReset();
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
   it('over real HTTP, repeated header lines arrive as separate warnings', async () => {
     const http = require('http');
     const realAxios = jest.requireActual('axios');
