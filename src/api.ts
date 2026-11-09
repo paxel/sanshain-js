@@ -284,9 +284,9 @@ interface ErrorBody {
 
 /** Whether a server version string is older than MAJOR.MINOR. */
 function versionBelow(version: string, major: number, minor: number): boolean {
-  const [maj, min] = version.replace(/^v/, '').split('.').map((part) => parseInt(part, 10));
-  if (isNaN(maj)) return false;
-  return maj < major || (maj === major && (isNaN(min) ? 0 : min) < minor);
+  const [maj, min = 0] = version.replace(/^v/, '').split('.').map((part) => Number.parseInt(part, 10));
+  if (Number.isNaN(maj)) return false;
+  return maj < major || (maj === major && (Number.isNaN(min) ? 0 : min) < minor);
 }
 
 export class SanshainClient {
@@ -430,8 +430,8 @@ export class SanshainClient {
       const serverVersion: string | undefined = parsed?.version;
       if (serverVersion) {
         this.serverVersion = serverVersion;
-        const major = parseInt(serverVersion.split('.')[0], 10);
-        if (!isNaN(major) && major < 2) {
+        const major = Number.parseInt(serverVersion.split('.')[0], 10);
+        if (!Number.isNaN(major) && major < 2) {
           this.oldServerMessage = `Sanshain server at ${this.baseUrl} is ${serverVersion}; this client requires Sanshain 2.x — upgrade the server.`;
         }
       }

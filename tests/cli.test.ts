@@ -1453,6 +1453,15 @@ describe('format: openapi on asyncapi requires', () => {
     expect(fs.existsSync(output('events.yaml'))).toBe(false);
   });
 
+  it.each(['2', 'v2.x'])('a server version %j without a readable minor counts as minor 0', async (version) => {
+    const config = writeProject(entry('    apiType: asyncapi\n    format: openapi'));
+
+    const run = await runCli(['-c', config, 'require'], rejectFormat(version, 'unknown field `format`'));
+
+    expect(run.exitCode).toBe(1);
+    expect(run.err).toContain(`format: openapi needs Sanshain Service 2.4.0 or later (server is ${version})`);
+  });
+
   it('the same 400 with /version failing says the server version is unknown', async () => {
     const config = writeProject(entry('    apiType: asyncapi\n    format: openapi'));
 
