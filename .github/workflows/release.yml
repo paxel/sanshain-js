@@ -30,7 +30,7 @@ jobs:
           ver=$(node -p "require('./package.json').version")
           tag=${GITHUB_REF_NAME#v}
           [ "$ver" = "$tag" ] || { echo "tag v$tag != package version $ver" >&2; exit 1; }
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - run: npm run build
       - run: npm test
 
@@ -58,7 +58,7 @@ jobs:
           node-version: '24'
           cache: 'npm'
           registry-url: 'https://registry.npmjs.org'
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - run: npm run build
       # An npm version is immutable — republishing is a hard error, so a re-run
       # (or a tag after the manual first publish) must skip what already landed.
