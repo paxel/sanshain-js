@@ -2,6 +2,10 @@
 
 [![Build and Test](https://github.com/paxel/sanshain-js/actions/workflows/build.yml/badge.svg?branch=summer)](https://github.com/paxel/sanshain-js/actions/workflows/build.yml)
 [![Security](https://github.com/paxel/sanshain-js/actions/workflows/security.yml/badge.svg?branch=summer)](https://github.com/paxel/sanshain-js/actions/workflows/security.yml)
+[![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=paxel_sanshain-js&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=paxel_sanshain-js)
+[![Security Rating](https://sonarcloud.io/api/project_badges/measure?project=paxel_sanshain-js&metric=security_rating)](https://sonarcloud.io/summary/new_code?id=paxel_sanshain-js)
+[![Coverage](https://sonarcloud.io/api/project_badges/measure?project=paxel_sanshain-js&metric=coverage)](https://sonarcloud.io/summary/new_code?id=paxel_sanshain-js)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/paxel/sanshain-js/badge)](https://scorecard.dev/viewer/?uri=github.com/paxel/sanshain-js)
 [![npm](https://img.shields.io/npm/v/sanshain)](https://www.npmjs.com/package/sanshain)
 [![Node 20+](https://img.shields.io/badge/node-20%2B-blue)](https://github.com/paxel/sanshain-js/actions/workflows/build.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](https://github.com/paxel/sanshain-js/blob/summer/LICENSE)
