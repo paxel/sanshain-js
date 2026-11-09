@@ -125,6 +125,16 @@ describe('Sanshain API Client', () => {
     expect(mockedAxios.get).toHaveBeenCalledWith('/version', expect.any(Object));
   });
 
+  it('names the server in the upgrade hint without the password of its URL', async () => {
+    const withPassword = new SanshainClient('http://ci:pw-in-url@localhost:3000', 'test-token');
+    mockedAxios.post.mockRejectedValue({ response: { status: 400, data: '{}', headers: {} } });
+    mockedAxios.get.mockResolvedValue({ status: 200, data: JSON.stringify({ version: '1.7.3' }), headers: {} });
+
+    await expect(
+      withPassword.provide({ producername: 'test-service', openapi_yaml: 'spec: content', stability: 'snapshot' })
+    ).rejects.toThrow('Sanshain server at http://localhost:3000/ is 1.7.3;');
+  });
+
   it('should only check the server version once per client instance', async () => {
     mockedAxios.get
       .mockRejectedValueOnce({

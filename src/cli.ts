@@ -22,6 +22,7 @@ import {
   isAdvisory
 } from './api';
 import { SanshainCache } from './cache';
+import { displayUrl } from './utils';
 import fs from 'fs';
 import path from 'path';
 
@@ -253,7 +254,7 @@ program
           // No local skip-if-unchanged: every provide uploads, and the server
           // treats an identical re-provide as a no-op.
 
-          console.log(`Providing ${effectiveApiType} ${config.serviceName} (stability: ${stability}) to ${url}...`);
+          console.log(`Providing ${effectiveApiType} ${config.serviceName} (stability: ${stability}) to ${displayUrl(url)}...`);
 
           let response: ProvideResponseBody | null = null;
           try {
@@ -425,7 +426,7 @@ program
           fs.mkdirSync(outputDir, { recursive: true });
         }
 
-        console.log(`Requiring ${req.serviceName} ${req.version} from ${url}...`);
+        console.log(`Requiring ${req.serviceName} ${req.version} from ${displayUrl(url)}...`);
 
         try {
           let fileName: string;
@@ -577,7 +578,7 @@ program
       }
 
       const client = new SanshainClient(url, token, insecure);
-      console.log(`Pushing catalog ${config.catalogInfo} for ${config.serviceName} to ${url}...`);
+      console.log(`Pushing catalog ${config.catalogInfo} for ${config.serviceName} to ${displayUrl(url)}...`);
       let pushed: CatalogPushResponse | undefined;
       let failure: unknown;
       try {

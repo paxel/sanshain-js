@@ -1,6 +1,6 @@
 import axios, { AxiosInstance, AxiosResponse } from 'axios';
 import { load } from 'js-yaml';
-import { compress, decompress, normalizeLineEndings, sanitize } from './utils';
+import { compress, decompress, displayUrl, normalizeLineEndings, sanitize } from './utils';
 
 export type Stability = 'snapshot' | 'ga';
 
@@ -432,7 +432,7 @@ export class SanshainClient {
         this.serverVersion = serverVersion;
         const major = Number.parseInt(serverVersion.split('.')[0], 10);
         if (!Number.isNaN(major) && major < 2) {
-          this.oldServerMessage = `Sanshain server at ${this.baseUrl} is ${serverVersion}; this client requires Sanshain 2.x — upgrade the server.`;
+          this.oldServerMessage = `Sanshain server at ${displayUrl(this.baseUrl)} is ${serverVersion}; this client requires Sanshain 2.x — upgrade the server.`;
         }
       }
     } catch {

@@ -30,6 +30,24 @@ export function sanitize(text: string): string {
 }
 
 /**
+ * A URL as it may be printed: without the user and password it can carry,
+ * which belong in no build log. An unparsable URL keeps only what follows
+ * its last `@`.
+ */
+export function displayUrl(url: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return url.slice(url.lastIndexOf('@') + 1);
+  }
+  if (!parsed.username && !parsed.password) return url;
+  parsed.username = '';
+  parsed.password = '';
+  return parsed.toString();
+}
+
+/**
  * Rewrite CRLF (and stray CR) to LF before upload. Sanshain compares provided
  * content byte for byte, so a Windows checkout of an otherwise identical file
  * would hash differently and provoke a spurious 409 version conflict.

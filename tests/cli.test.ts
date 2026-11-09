@@ -774,6 +774,48 @@ describe('an unknown provide apiType', () => {
   });
 });
 
+describe('secrets in the output', () => {
+  const failing = (axios: any) => {
+    const boom = { response: { status: 500, data: Buffer.from('{"error":"boom"}'), headers: {} } };
+    axios.get.mockRejectedValue(boom);
+    axios.post.mockRejectedValue(boom);
+    axios.put.mockRejectedValue(boom);
+  };
+  const yaml = [
+    'serviceName: svc',
+    'catalogInfo: catalog-info.yaml',
+    'provide:',
+    '  file: openapi.yaml',
+    'requires:',
+    '  - serviceName: users',
+    '    version: 1.0.0',
+    '    outputDirectory: gen',
+    '    endpoints:',
+    '      - method: GET',
+    '        path: /users',
+    ''
+  ].join('\n');
+
+  it.each(['provide', 'require', 'catalog'])('%s prints neither the token nor the password of the URL', async (command) => {
+    const config = writeProject('sanshainUrl: https://ci:pw-in-url@sanshain.example\n' + yaml, {
+      'openapi.yaml': 'openapi: 3.0.3\n',
+      'catalog-info.yaml': 'kind: Component\n'
+    });
+    process.env.SANSHAIN_TOKEN = 'san_from_env';
+
+    for (const args of [[], ['--token', 'san_from_flag']]) {
+      const run = await runCli(['-c', config, ...args, command], failing);
+
+      expect(run.exitCode).toBe(1);
+      expect(`${run.out}\n${run.err}`).toContain('https://sanshain.example/');
+      for (const secret of ['san_from_env', 'san_from_flag', 'pw-in-url', 'ci:']) {
+        expect(run.out).not.toContain(secret);
+        expect(run.err).not.toContain(secret);
+      }
+    }
+  });
+});
+
 describe('SANSHAIN_URL precedence', () => {
   const yaml = 'sanshainUrl: http://from-yaml\nserviceName: svc\nprovide:\n  file: openapi.yaml\n';
   const ok = (axios: any) => axios.post.mockResolvedValue({ status: 202, data: PROVIDE_OK, headers: {} });
