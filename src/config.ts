@@ -264,6 +264,9 @@ export function loadConfig(configPath: string = 'sanshain.yaml', bestEffort: boo
   // js-yaml 5 reads YAML 1.2 without merge keys; `<<` is added back so a
   // sanshain.yaml that shares settings through anchors keeps working.
   const config = load(fileContents, { schema: CORE_SCHEMA.withTags(mergeTag) }) as SanshainConfig;
+  if (!isObject(config)) {
+    throw new Error(`${fullPath} must be a mapping of settings, such as sanshainUrl: <url>`);
+  }
 
   applyEnvOverrides(config);
   // Order matters: removed fields fail by name first, then unknown fields get

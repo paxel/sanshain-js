@@ -24,6 +24,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - An empty Action input (`ga`, `trunk`, `tag`, `tickets`, `note`) keeps the `SANSHAIN_*` variable the job or workflow set instead of overriding it with an empty value; `trunk` now defaults to empty instead of `'false'`.
 - An unknown `requires[].apiType` fails as a configuration error when `sanshain.yaml` is loaded, before any call; it was sent to `/require` as OpenAPI.
 - An unknown provide `apiType` fails as a configuration error when `sanshain.yaml` is loaded, before any call; the provide reported success without uploading anything.
+- A `sanshain.yaml` that holds no mapping of settings (`~`, a plain string, a list) fails naming the file; it failed with a JavaScript type error such as `Cannot read properties of null`.
 - `require --dry-run` writes nothing: neither the output directory nor the file (it wrote the downloaded file).
 - `--version` reads the version from `package.json` instead of a copy in the CLI that a version bump could leave behind.
 - The build, release and security workflows pin every action to a full commit SHA; they referenced tags.

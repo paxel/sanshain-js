@@ -542,6 +542,14 @@ describe('unknown fields (the puzzled cat)', () => {
     expect(stderr.mock.calls[0][0]).toBe(cat("sanshain.yaml: unknown field 'catalogInf' - rejected (strict)"));
   });
 
+  it.each(['~\n', 'just text\n', '- sanshainUrl: http://localhost:3000\n'])(
+    'a document that is no mapping (%j) is an error naming the file',
+    (yaml) => {
+      process.env.SANSHAIN_URL = 'http://localhost:3000';
+      expect(() => load(yaml)).toThrow(`${testYamlPath} must be a mapping of settings, such as sanshainUrl: <url>`);
+    }
+  );
+
   it('the cat shows even when sanshainUrl is missing', () => {
     expect(() => load('serviceName: svc\nsanshainUrll: http://x\n')).toThrow('Missing required field: sanshainUrl');
     expect(stderr.mock.calls[0][0]).toBe(cat("sanshain.yaml: unknown field 'sanshainUrll' - ignored"));
