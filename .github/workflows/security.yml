@@ -1,5 +1,7 @@
 # Fails only when a dependency has a known vulnerability (npm advisories). Runs weekly and
 # on demand, because new advisories appear without any change in this repo.
+# CI runs the same job (build.yml, same job name) on every push and pull request, for the
+# runtime dependencies only (--omit=dev); this weekly run audits the dev tooling too.
 # Warnings such as unmaintained or yanked packages are reported but never fail it.
 name: Security
 
