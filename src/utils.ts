@@ -30,6 +30,23 @@ export function sanitize(text: string): string {
 }
 
 /**
+ * Text from the server as it may be printed: every control character but the
+ * tab becomes `?`, so a message cannot start a forged log line or carry
+ * terminal escape sequences.
+ */
+export function printable(text: string): string {
+  return Array.from(text, (char) => {
+    const code = char.codePointAt(0) ?? 0;
+    return (code < 32 && code !== 9) || (code >= 127 && code <= 159) ? '?' : char;
+  }).join('');
+}
+
+/** JSON from the server, with every string in it made printable. */
+export function parseServerJson(body: string): any {
+  return JSON.parse(body, (_key, value) => (typeof value === 'string' ? printable(value) : value));
+}
+
+/**
  * A URL as it may be printed: without the user and password it can carry,
  * which belong in no build log. An unparsable URL keeps only what follows
  * its last `@`.

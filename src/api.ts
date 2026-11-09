@@ -1,6 +1,6 @@
 import axios, { AxiosInstance, AxiosResponse } from 'axios';
 import { load } from 'js-yaml';
-import { compress, decompress, displayUrl, normalizeLineEndings, sanitize } from './utils';
+import { compress, decompress, displayUrl, normalizeLineEndings, parseServerJson, printable, sanitize } from './utils';
 
 export type Stability = 'snapshot' | 'ga';
 
@@ -268,10 +268,10 @@ export interface CatalogPushResponse {
  */
 export function warningsOf(response: any): string[] {
   const distinct = response?.request?.res?.headersDistinct?.['sanshain-warning'];
-  if (Array.isArray(distinct)) return distinct.map(String);
+  if (Array.isArray(distinct)) return distinct.map((v) => printable(String(v)));
   const value = response?.headers?.['sanshain-warning'];
   if (value === undefined || value === null) return [];
-  return Array.isArray(value) ? value.map(String) : [String(value)];
+  return (Array.isArray(value) ? value : [value]).map((v) => printable(String(v)));
 }
 
 /** The text of the service's 403 when the caller lacks the releaser role. */
@@ -399,7 +399,7 @@ export class SanshainClient {
 
   private parseErrorBody(body: string): ErrorBody {
     try {
-      const parsed = JSON.parse(body);
+      const parsed = parseServerJson(body);
       if (parsed && typeof parsed === 'object') {
         return parsed as ErrorBody;
       }
@@ -426,7 +426,7 @@ export class SanshainClient {
         validateStatus: (status) => status === 200
       });
       const body = await this.decodeBody(response);
-      const parsed = JSON.parse(body);
+      const parsed = parseServerJson(body);
       const serverVersion: string | undefined = parsed?.version;
       if (serverVersion) {
         this.serverVersion = serverVersion;
@@ -531,7 +531,7 @@ export class SanshainClient {
       throw await this.translateError(error);
     }
     try {
-      return JSON.parse(await this.decodeBody(response)) as RetiredProtocol;
+      return parseServerJson(await this.decodeBody(response)) as RetiredProtocol;
     } catch {
       return null;
     }
@@ -576,7 +576,7 @@ export class SanshainClient {
       }
       throw await this.translateError(error);
     }
-    const pushed = JSON.parse(await this.decodeBody(response)) as CatalogPushResponse;
+    const pushed = parseServerJson(await this.decodeBody(response)) as CatalogPushResponse;
     return { ...pushed, recorded: pushed.recorded !== false };
   }
 
@@ -617,7 +617,7 @@ export class SanshainClient {
     try {
       const body = await this.decodeBody(response);
       if (typeof body === 'string') {
-        return JSON.parse(body) as ProvideResponseBody;
+        return parseServerJson(body) as ProvideResponseBody;
       }
       return body as ProvideResponseBody;
     } catch {

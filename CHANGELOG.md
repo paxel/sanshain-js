@@ -30,6 +30,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - The build, release and security workflows pin every action to a full commit SHA; they referenced tags.
 
 ### Security
+- Text the service sends (error messages, `Sanshain-Warning` values, the provide, retire and catalog answers, its version) is printed with every control character but the tab shown as `?`, so it can no longer forge log lines or send terminal escape sequences.
 - A user and password in the Sanshain URL are no longer printed: `provide`, `require` and `catalog` and the pre-2.0 server hint show the URL without them. The token was never printed.
 - The Action passes its `command` input to the shell as data, so an expression placed in it can no longer inject shell code.
 

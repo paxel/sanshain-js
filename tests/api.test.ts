@@ -228,6 +228,66 @@ describe('Sanshain-Warning collection', () => {
     expect((await client.pushCatalog('s', 'x')).recorded).toBe(false);
   });
 
+  describe('text from the server is made printable', () => {
+    const forged = 'boom\n✓ Provided svc 9.9.9\u001b[2K\r\u009b\u007f\tend';
+    const shown = 'boom?✓ Provided svc 9.9.9?[2K???\tend';
+    let client: SanshainClient;
+
+    beforeEach(() => {
+      jest.clearAllMocks();
+      mockedAxios.create.mockReturnValue(mockedAxios as any);
+      client = new SanshainClient('http://localhost:3000');
+    });
+
+    it('in an error message and a proposed version', async () => {
+      mockedAxios.post.mockRejectedValue({
+        response: { status: 409, data: JSON.stringify({ error: forged, proposed_version: '1.3.0\nx' }), headers: {} }
+      });
+      mockedAxios.get.mockResolvedValue({ status: 200, data: JSON.stringify({ version: '2.0.0' }), headers: {} });
+
+      const error = (await client
+        .provide({ producername: 'p', openapi_yaml: 'x', stability: 'ga' })
+        .catch((e: unknown) => e)) as VersionConflictError;
+
+      expect(error).toBeInstanceOf(VersionConflictError);
+      expect(error.message).toBe(shown);
+      expect(error.proposedVersion).toBe('1.3.0?x');
+    });
+
+    it('in a catalog answer', async () => {
+      mockedAxios.put.mockResolvedValueOnce({
+        status: 200,
+        data: JSON.stringify({ system: forged, trunk: false, resources: ['resource:db\nx'] }),
+        headers: {}
+      });
+
+      const pushed = await client.pushCatalog('s', 'x');
+
+      expect(pushed.system).toBe(shown);
+      expect(pushed.resources).toEqual(['resource:db?x']);
+    });
+
+    it('in a provide answer and a server version', async () => {
+      mockedAxios.post.mockResolvedValueOnce({
+        status: 202,
+        data: JSON.stringify({ version: '1.0.0\n', stability: 'snapshot', content_hash: 'h', changes: {} }),
+        headers: {}
+      });
+      expect((await client.provide({ producername: 'p', openapi_yaml: 'x', stability: 'snapshot' }))!.version).toBe('1.0.0?');
+
+      mockedAxios.post.mockRejectedValue({ response: { status: 404, data: '{}', headers: {} } });
+      mockedAxios.get.mockResolvedValue({ status: 200, data: JSON.stringify({ version: '1.7.3\u001b' }), headers: {} });
+      await expect(client.provide({ producername: 'p', openapi_yaml: 'x', stability: 'snapshot' })).rejects.toThrow(
+        'is 1.7.3?; this client requires Sanshain 2.x'
+      );
+    });
+
+    it('in a Sanshain-Warning', () => {
+      expect(warningsOf({ headers: { 'sanshain-warning': '\u001b[31mred' } })).toEqual(['?[31mred']);
+      expect(warningsOf({ request: { res: { headersDistinct: { 'sanshain-warning': ['a\u0007', 'b'] } } } })).toEqual(['a?', 'b']);
+    });
+  });
+
   it('over real HTTP, repeated header lines arrive as separate warnings', async () => {
     const http = require('http');
     const realAxios = jest.requireActual('axios');
