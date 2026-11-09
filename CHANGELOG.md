@@ -15,6 +15,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - A missing or broken `sanshain.yaml` (unreadable, invalid YAML, 1.x fields, failed validation) under `--best-effort` or `SANSHAIN_BEST_EFFORT` prints the error with the command's prefix (e.g. `Error providing spec: Configuration file not found: <path>`), then `Continuing (best effort)`, and exits 0 without a call, now without the `Warning loading config:` line and the skip notice that followed it. Such a file's own `bestEffort` and `strict` do not count, and `SANSHAIN_STRICT=true` makes it fail also with best effort. Under best effort a file that does not validate no longer fails over unknown fields because of its own `strict: true`. Without best effort a missing file fails, naming it, as before. The `--best-effort` help says so.
 
 ### Fixed
+- Installing the package, or running it through `npx` and the GitHub Action, no longer downloads TypeScript: it was declared as a runtime dependency although only the build needs it.
 - The Action's inputs table in `docs/github-actions.md` now lists `trunk`, `tag`, `tickets` and `note`.
 - The examples in `docs/github-actions.md` name the Action `paxel/sanshain-js@summer`, a ref that exists; the ones before did not resolve.
 - A require with `apiType: grpc` goes to `/require/grpc` and is saved as `.proto`, and its bundle sends `api_type: proto`; it went to `/require` and was saved as `.yaml`.

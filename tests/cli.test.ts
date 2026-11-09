@@ -1166,6 +1166,25 @@ describe('version', () => {
   });
 });
 
+describe('package', () => {
+  // A user installing the CLI, or the Action running npx, downloads every
+  // runtime dependency: only what the built code requires belongs there.
+  it('declares as runtime dependencies exactly the modules the sources import', () => {
+    const srcDir = path.join(__dirname, '..', 'src');
+    const imported = new Set<string>();
+    for (const file of fs.readdirSync(srcDir).filter((f) => f.endsWith('.ts'))) {
+      const text = fs.readFileSync(path.join(srcDir, file), 'utf8');
+      for (const m of text.matchAll(/(?:from\s+|require\()['"]([^'".][^'"]*)['"]/g)) {
+        const name = m[1].startsWith('@') ? m[1].split('/').slice(0, 2).join('/') : m[1].split('/')[0];
+        imported.add(name);
+      }
+    }
+    const builtins = new Set(require('module').builtinModules);
+    const external = [...imported].filter((n) => !builtins.has(n) && !n.startsWith('node:')).sort();
+    expect(Object.keys(require('../package.json').dependencies).sort()).toEqual(external);
+  });
+});
+
 describe('no provide skip, no dry-run caching', () => {
   const PROVIDE_YAML = 'sanshainUrl: http://localhost:3000\nserviceName: svc\nprovide:\n  file: openapi.yaml\n';
   // The server answers the real content hash, which is what the old local
