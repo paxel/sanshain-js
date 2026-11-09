@@ -246,7 +246,15 @@ export function configBaseDir(configPath: string = 'sanshain.yaml'): string {
   return path.dirname(path.resolve(process.cwd(), configPath));
 }
 
-export function loadConfig(configPath: string = 'sanshain.yaml'): SanshainConfig {
+/**
+ * Load and validate sanshain.yaml. `bestEffort` is best effort from outside
+ * the file (--best-effort or SANSHAIN_BEST_EFFORT): under it a file that does
+ * not validate is broken and its own `strict: true` does not count, so its
+ * unknown fields are only reported and the validation error is thrown.
+ * SANSHAIN_STRICT still counts. Unknown fields rejected by strict in a file
+ * that otherwise validates throw UnknownFieldsError, which nothing softens.
+ */
+export function loadConfig(configPath: string = 'sanshain.yaml', bestEffort: boolean = false): SanshainConfig {
   const fullPath = path.resolve(process.cwd(), configPath);
   if (!fs.existsSync(fullPath)) {
     throw new Error(`Configuration file not found: ${fullPath}`);
@@ -260,10 +268,19 @@ export function loadConfig(configPath: string = 'sanshain.yaml'): SanshainConfig
   applyEnvOverrides(config);
   // Order matters: removed fields fail by name first, then unknown fields get
   // the cat (so it shows even when a later validation error follows, e.g. a
-  // misspelt required field), and only then the remaining validation.
+  // misspelt required field), and only then the validation error is thrown.
   rejectLegacyFields(config);
-  reportUnknownFields(config);
-  validateConfig(config);
+  let invalid: unknown;
+  try {
+    validateConfig(config);
+  } catch (error) {
+    invalid = error;
+  }
+  const broken = invalid !== undefined;
+  // Without SANSHAIN_STRICT, strict can only have come from the broken file.
+  const strict = Boolean(config.strict) && !(bestEffort && broken && !envFlag('SANSHAIN_STRICT'));
+  reportUnknownFields(config, strict);
+  if (broken) throw invalid;
 
   return config;
 }
@@ -340,10 +357,9 @@ export function puzzledCat(line: string): string {
   return ['   /\\_/\\  ?', `  ( O_o )   ${line}`, ' ---U-U---'].join('\n');
 }
 
-function reportUnknownFields(config: SanshainConfig): void {
+function reportUnknownFields(config: SanshainConfig, strict: boolean): void {
   const fields = findUnknownFields(config);
   if (fields.length === 0) return;
-  const strict = Boolean(config.strict);
   const line = unknownFieldsLine(fields, strict);
   console.error(puzzledCat(line));
   if (strict) {

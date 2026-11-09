@@ -605,25 +605,128 @@ describe('best effort softens failed calls only', () => {
     expect(fs.readFileSync(path.join(projectDir, 'gen/users.yaml'), 'utf8')).toBe('paths: {}');
   });
 
-  const broken: Record<string, string | null> = {
-    unreadable: null,
-    invalid: 'sanshainUrl: http://localhost:3000\nserviceName: svc\nrequires:\n  - serviceName: users\n    outputDirectory: gen\n    endpoints:\n      - method: GET\n        path: /x\n',
-    '1.x field': 'sanshainUrl: http://localhost:3000\nserviceName: svc\nreleaseBranches: [main]\n',
-    'bestEffort in the file': 'sanshainUrl: http://localhost:3000\nserviceName: svc\nbestEffort: true\ntimeout: 30\n'
+  const noCall = (run: RunResult) => {
+    expect(run.axios.post).not.toHaveBeenCalled();
+    expect(run.axios.get).not.toHaveBeenCalled();
+    expect(run.axios.put).not.toHaveBeenCalled();
   };
-  for (const command of ['provide', 'require', 'catalog']) {
-    for (const [name, yaml] of Object.entries(broken)) {
-      it(`${command}: a broken sanshain.yaml (${name}) fails also with best effort`, async () => {
-        const config = yaml === null ? path.join(projectDir, 'sanshain.yaml') : writeProject(yaml);
-        process.env.SANSHAIN_BEST_EFFORT = 'true';
+  const prefixes: Record<string, string> = {
+    provide: 'Error providing spec',
+    require: 'Error during require',
+    catalog: 'Error pushing catalog'
+  };
+  const broken: Record<string, { yaml: string; error: string }> = {
+    'invalid YAML': { yaml: 'sanshainUrl: [http://localhost:3000\n', error: 'deficient indentation' },
+    'a 1.x field': {
+      yaml: 'sanshainUrl: http://localhost:3000\nserviceName: svc\ntimeout: 30\n',
+      error: "'timeout' is no longer supported"
+    }
+  };
 
-        const run = await runCli(['-c', config, '--best-effort', command]);
+  for (const command of ['provide', 'require', 'catalog']) {
+    describe(`${command}: a missing sanshain.yaml`, () => {
+      const missing = () => path.join(projectDir, 'sanshain.yaml');
+
+      it('fails naming the file without best effort', async () => {
+        const run = await runCli(['-c', missing(), command]);
 
         expect(run.exitCode).toBe(1);
+        expect(run.err).toContain(`${prefixes[command]}: Configuration file not found: ${missing()}`);
         expect(run.err).not.toContain('Continuing (best effort)');
-        expect(run.axios.post).not.toHaveBeenCalled();
-        expect(run.axios.get).not.toHaveBeenCalled();
-        expect(run.axios.put).not.toHaveBeenCalled();
+        noCall(run);
+      });
+
+      it('is a warning, exit 0 and no call with --best-effort', async () => {
+        const run = await runCli(['-c', missing(), '--best-effort', command]);
+
+        expect(run.exitCode).toBeUndefined();
+        expect(run.err).toBe(
+          `${prefixes[command]}: Configuration file not found: ${missing()}\nContinuing (best effort)`
+        );
+        noCall(run);
+      });
+
+      it('is a warning, exit 0 and no call with SANSHAIN_BEST_EFFORT', async () => {
+        process.env.SANSHAIN_BEST_EFFORT = '1';
+
+        const run = await runCli(['-c', missing(), command]);
+
+        expect(run.exitCode).toBeUndefined();
+        expect(run.err).toContain('Continuing (best effort)');
+        noCall(run);
+      });
+
+      it('fails under SANSHAIN_STRICT also with best effort', async () => {
+        process.env.SANSHAIN_STRICT = 'true';
+        process.env.SANSHAIN_BEST_EFFORT = 'true';
+
+        const run = await runCli(['-c', missing(), '--best-effort', command]);
+
+        expect(run.exitCode).toBe(1);
+        expect(run.err).toContain(`Configuration file not found: ${missing()}`);
+        expect(run.err).not.toContain('Continuing (best effort)');
+        noCall(run);
+      });
+    });
+
+    for (const [name, { yaml, error }] of Object.entries(broken)) {
+      describe(`${command}: a broken sanshain.yaml (${name})`, () => {
+        it('fails without best effort', async () => {
+          const run = await runCli(['-c', writeProject(yaml), command]);
+
+          expect(run.exitCode).toBe(1);
+          expect(run.err).toContain(error);
+          expect(run.err).not.toContain('Continuing (best effort)');
+          noCall(run);
+        });
+
+        it('is a warning, exit 0 and no call with --best-effort', async () => {
+          const run = await runCli(['-c', writeProject(yaml), '--best-effort', command]);
+
+          expect(run.exitCode).toBeUndefined();
+          expect(run.err).toContain(`${prefixes[command]}: `);
+          expect(run.err).toContain(error);
+          expect(run.err).toContain('Continuing (best effort)');
+          noCall(run);
+        });
+
+        it('is a warning, exit 0 and no call with SANSHAIN_BEST_EFFORT', async () => {
+          process.env.SANSHAIN_BEST_EFFORT = 'true';
+
+          const run = await runCli(['-c', writeProject(yaml), command]);
+
+          expect(run.exitCode).toBeUndefined();
+          expect(run.err).toContain('Continuing (best effort)');
+          noCall(run);
+        });
+
+        it('fails with only the file’s own bestEffort: true', async () => {
+          const run = await runCli(['-c', writeProject('bestEffort: true\n' + yaml), command]);
+
+          expect(run.exitCode).toBe(1);
+          expect(run.err).toContain(error);
+          expect(run.err).not.toContain('Continuing (best effort)');
+          noCall(run);
+        });
+
+        it('fails under SANSHAIN_STRICT also with best effort', async () => {
+          process.env.SANSHAIN_STRICT = 'true';
+
+          const run = await runCli(['-c', writeProject(yaml), '--best-effort', command]);
+
+          expect(run.exitCode).toBe(1);
+          expect(run.err).toContain(error);
+          expect(run.err).not.toContain('Continuing (best effort)');
+          noCall(run);
+        });
+
+        it('the file’s own strict: true does not count with best effort', async () => {
+          const run = await runCli(['-c', writeProject('strict: true\n' + yaml), '--best-effort', command]);
+
+          expect(run.exitCode).toBeUndefined();
+          expect(run.err).toContain('Continuing (best effort)');
+          noCall(run);
+        });
       });
     }
   }
@@ -646,15 +749,26 @@ describe('best effort softens failed calls only', () => {
 });
 
 describe('an unknown provide apiType', () => {
-  it('fails before any call instead of reporting success, also with best effort', async () => {
-    const config = writeProject('sanshainUrl: http://localhost:3000\nserviceName: svc\nprovides:\n  - file: api.raml\n    apiType: raml\n', {
+  const project = () =>
+    writeProject('sanshainUrl: http://localhost:3000\nserviceName: svc\nprovides:\n  - file: api.raml\n    apiType: raml\n', {
       'api.raml': '#%RAML 1.0\n'
     });
 
-    const run = await runCli(['-c', config, '--best-effort', 'provide']);
+  it('fails before any call instead of reporting success', async () => {
+    const run = await runCli(['-c', project(), 'provide']);
 
     expect(run.exitCode).toBe(1);
     expect(run.err).toContain("provides[0]: unsupported apiType 'raml'");
+    expect(run.out).not.toContain('Successfully provided');
+    expect(run.axios.post).not.toHaveBeenCalled();
+  });
+
+  it('is a broken sanshain.yaml: a warning and no call under best effort', async () => {
+    const run = await runCli(['-c', project(), '--best-effort', 'provide']);
+
+    expect(run.exitCode).toBeUndefined();
+    expect(run.err).toContain("Error providing spec: provides[0]: unsupported apiType 'raml'");
+    expect(run.err).toContain('Continuing (best effort)');
     expect(run.out).not.toContain('Successfully provided');
     expect(run.axios.post).not.toHaveBeenCalled();
   });
@@ -700,11 +814,12 @@ describe('SANSHAIN_BEST_EFFORT on the command line', () => {
 });
 
 describe('unknown fields on the command line', () => {
-  it('the cat shows when a later validation error follows, which best effort does not soften', async () => {
-    const config = writeProject(
+  const misspelt = (strict: boolean) =>
+    writeProject(
       [
         'sanshainUrl: http://localhost:3000',
         'serviceName: svc',
+        ...(strict ? ['strict: true'] : []),
         'requires:',
         '  - serviceName: users',
         '    verison: 1.0.0',
@@ -716,11 +831,50 @@ describe('unknown fields on the command line', () => {
       ].join('\n')
     );
 
-    const run = await runCli(['-c', config, '--best-effort', 'require']);
+  it('the cat shows when a later validation error follows', async () => {
+    const run = await runCli(['-c', misspelt(false), 'require']);
 
     expect(run.exitCode).toBe(1);
     expect(run.err).toContain("sanshain.yaml: unknown field 'requires[0].verison' - ignored");
     expect(run.err).toContain("missing 'version'");
+  });
+
+  it('a file that does not validate is broken: best effort softens it', async () => {
+    const run = await runCli(['-c', misspelt(false), '--best-effort', 'require']);
+
+    expect(run.exitCode).toBeUndefined();
+    expect(run.err).toContain("sanshain.yaml: unknown field 'requires[0].verison' - ignored");
+    expect(run.err).toContain("Error during require: requires[0] (users): missing 'version'");
+    expect(run.err).toContain('Continuing (best effort)');
+    expect(run.axios.get).not.toHaveBeenCalled();
+  });
+
+  it('under the file’s own strict a file that does not validate fails without best effort', async () => {
+    const run = await runCli(['-c', misspelt(true), 'require']);
+
+    expect(run.exitCode).toBe(1);
+    expect(run.err).toContain("sanshain.yaml: unknown field 'requires[0].verison' - rejected (strict)");
+    expect(run.err).not.toContain('Continuing (best effort)');
+  });
+
+  it('under the file’s own strict a file that does not validate is still softened by best effort', async () => {
+    const run = await runCli(['-c', misspelt(true), '--best-effort', 'require']);
+
+    expect(run.exitCode).toBeUndefined();
+    expect(run.err).toContain("sanshain.yaml: unknown field 'requires[0].verison' - ignored");
+    expect(run.err).toContain("missing 'version'");
+    expect(run.err).toContain('Continuing (best effort)');
+    expect(run.axios.get).not.toHaveBeenCalled();
+  });
+
+  it('under SANSHAIN_STRICT a file that does not validate fails also with best effort', async () => {
+    process.env.SANSHAIN_STRICT = 'true';
+
+    const run = await runCli(['-c', misspelt(false), '--best-effort', 'require']);
+
+    expect(run.exitCode).toBe(1);
+    expect(run.err).toContain("sanshain.yaml: unknown field 'requires[0].verison' - rejected (strict)");
+    expect(run.err).not.toContain('Continuing (best effort)');
   });
 
   it('without strict: one cat on stderr, then the provide runs normally', async () => {
@@ -738,7 +892,7 @@ describe('unknown fields on the command line', () => {
     expect(run.err).toContain("sanshain.yaml: unknown field 'catalogInf' - ignored");
   });
 
-  it('strict fails the command even under best-effort', async () => {
+  it('strict fails a file that otherwise validates even under best-effort', async () => {
     const config = writeProject(
       'sanshainUrl: http://localhost:3000\nserviceName: svc\nstrict: true\ncatalogInf: x\nprovide:\n  file: openapi.yaml\n',
       { 'openapi.yaml': 'openapi: 3.0.3\n' }

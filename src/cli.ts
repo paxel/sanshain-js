@@ -1,5 +1,6 @@
 import { Command, InvalidArgumentError } from 'commander';
 import {
+  UnknownFieldsError,
   configBaseDir,
   envFlag,
   fillAnnotations,
@@ -104,6 +105,27 @@ function annotationsFor(config: any, strict: boolean): Annotation[] {
 }
 
 /**
+ * Load sanshain.yaml for a command. A missing or broken file cannot be trusted
+ * to say bestEffort or strict, so only --best-effort and SANSHAIN_BEST_EFFORT
+ * soften it, and SANSHAIN_STRICT beats them: softened, the error is printed
+ * with `prefix`, then `Continuing (best effort)`, and the command makes no
+ * call (undefined). Otherwise the error is thrown, as are unknown fields
+ * rejected by strict in a file that otherwise loads, which nothing softens.
+ */
+function loadConfigFor(prefix: string): any | undefined {
+  const globalOptions = program.opts();
+  const bestEffort = Boolean(globalOptions.bestEffort) || envFlag('SANSHAIN_BEST_EFFORT');
+  try {
+    return loadConfig(globalOptions.config, bestEffort);
+  } catch (error) {
+    if (!bestEffort || envFlag('SANSHAIN_STRICT') || error instanceof UnknownFieldsError) throw error;
+    console.error(`${prefix}: ${(error as Error).message}`);
+    console.warn('Continuing (best effort)');
+    return undefined;
+  }
+}
+
+/**
  * The ETag to send as If-None-Match: none when the output file is gone, so the
  * answer is a 200 that writes it again instead of a 304 that leaves it missing.
  */
@@ -131,7 +153,11 @@ program
   .option('--tag <branch>', 'this build belongs to a sanshain-branch — release/hotfix pipelines (also: SANSHAIN_TAG)')
   .option('--insecure', 'allow insecure SSL connections', false)
   .option('--force', 'no effect, kept for compatibility (every provide uploads)', false)
-  .option('--best-effort', 'continue on errors', false)
+  .option(
+    '--best-effort',
+    'turn failed calls, and a missing or broken sanshain.yaml, into warnings and exit 0 (also: SANSHAIN_BEST_EFFORT=true or 1; bestEffort: true in sanshain.yaml counts for failed calls only; SANSHAIN_STRICT=true fails a missing or broken sanshain.yaml anyway)',
+    false
+  )
   .option('--build-url <url>', "where this build ran (also: SANSHAIN_BUILD_URL; default: the runner's own variable)")
   .option('--change-url <url>', "the pull or merge request behind this build (also: SANSHAIN_CHANGE_URL; default: the runner's own variable)")
   .option('--tickets <ids>', 'ticket ids this build closes, comma-separated (also: SANSHAIN_TICKETS)')
@@ -150,8 +176,8 @@ program
     let config: any = { bestEffort: false };
     try {
       const globalOptions = program.opts();
-      // A broken sanshain.yaml is a configuration error: best effort covers failed calls only.
-      config = loadConfig(globalOptions.config);
+      config = loadConfigFor('Error providing spec');
+      if (!config) return;
 
       if (globalOptions.bestEffort) config.bestEffort = true;
       if (envFlag('SANSHAIN_BEST_EFFORT')) config.bestEffort = true;
@@ -352,8 +378,8 @@ program
     let config: any = { bestEffort: false };
     try {
       const globalOptions = program.opts();
-      // A broken sanshain.yaml is a configuration error: best effort covers failed calls only.
-      config = loadConfig(globalOptions.config);
+      config = loadConfigFor('Error during require');
+      if (!config) return;
 
       if (globalOptions.bestEffort) config.bestEffort = true;
       if (envFlag('SANSHAIN_BEST_EFFORT')) config.bestEffort = true;
@@ -510,8 +536,8 @@ program
     let config: any = { bestEffort: false };
     try {
       const globalOptions = program.opts();
-      // A broken sanshain.yaml is a configuration error: best effort covers failed calls only.
-      config = loadConfig(globalOptions.config);
+      config = loadConfigFor('Error pushing catalog');
+      if (!config) return;
 
       if (globalOptions.bestEffort) config.bestEffort = true;
       if (envFlag('SANSHAIN_BEST_EFFORT')) config.bestEffort = true;

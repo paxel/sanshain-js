@@ -433,9 +433,9 @@ describe('unknown fields (the puzzled cat)', () => {
     process.env = originalEnv;
   });
 
-  const load = (yaml: string) => {
+  const load = (yaml: string, bestEffort?: boolean) => {
     fs.writeFileSync(testYamlPath, yaml);
-    return loadConfig(testYamlPath);
+    return loadConfig(testYamlPath, bestEffort);
   };
 
   it('prints the cat once for a single unknown field and carries on', () => {
@@ -522,6 +522,24 @@ describe('unknown fields (the puzzled cat)', () => {
     expect(() => load(`strict: true\n${typoedVersion}`)).toThrow(
       "sanshain.yaml: unknown field 'requires[0].verison' - rejected (strict)"
     );
+  });
+
+  it('under best effort the strict of a file that does not validate does not count', () => {
+    expect(() => load(`strict: true\n${typoedVersion}`, true)).toThrow("requires[0] (users): missing 'version'");
+    expect(stderr.mock.calls[0][0]).toBe(cat("sanshain.yaml: unknown field 'requires[0].verison' - ignored"));
+  });
+
+  it('under best effort SANSHAIN_STRICT still rejects the unknown fields', () => {
+    process.env.SANSHAIN_STRICT = 'true';
+    expect(() => load(typoedVersion, true)).toThrow(UnknownFieldsError);
+    expect(stderr.mock.calls[0][0]).toBe(cat("sanshain.yaml: unknown field 'requires[0].verison' - rejected (strict)"));
+  });
+
+  it('under best effort strict still rejects the unknown fields of a file that validates', () => {
+    expect(() => load('sanshainUrl: http://localhost:3000\nserviceName: svc\nstrict: true\ncatalogInf: x\n', true)).toThrow(
+      UnknownFieldsError
+    );
+    expect(stderr.mock.calls[0][0]).toBe(cat("sanshain.yaml: unknown field 'catalogInf' - rejected (strict)"));
   });
 
   it('the cat shows even when sanshainUrl is missing', () => {
