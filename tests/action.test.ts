@@ -46,7 +46,18 @@ describe('the Action', () => {
   it('never puts an input into the script text', () => {
     expect(step.run).not.toContain('${{');
     expect(step.env.SANSHAIN_ACTION_COMMAND).toBe('${{ inputs.command }}');
-    expect(step.run).toContain('npx sanshain $SANSHAIN_ACTION_COMMAND');
+    expect(step.run).toContain('$SANSHAIN_ACTION_COMMAND');
+  });
+
+  it('runs one exact released version, never the newest on npm', () => {
+    const pinned = /npx --yes sanshain@(\d+)\.(\d+)\.(\d+) \$SANSHAIN_ACTION_COMMAND/.exec(step.run);
+    expect(pinned).not.toBeNull();
+    // At most the version being built: the pin names a release that is already
+    // on npm, and it is raised after the publish.
+    const own = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8')).version.split('.').map(Number);
+    const pin = pinned!.slice(1).map(Number);
+    const notNewer = pin[0] < own[0] || (pin[0] === own[0] && (pin[1] < own[1] || (pin[1] === own[1] && pin[2] <= own[2])));
+    expect(notNewer).toBe(true);
   });
 
   it('an empty input keeps what the job or workflow set', () => {
