@@ -31,7 +31,8 @@ jobs:
           cache: 'npm'
       - run: npm ci --ignore-scripts
       - name: Tests with coverage
-        run: npx jest --coverage --coverageReporters=lcov
+        # The jest npm ci installed, through the test script; npx could fetch one.
+        run: npm test -- --coverage --coverageReporters=lcov
       - uses: SonarSource/sonarqube-scan-action@4d1dc0c91ee400dcf8a6dddf2f705ac36542e304 # v8.4.0
         env:
           SONAR_TOKEN: ${{ secrets.SQ_TOKEN }}

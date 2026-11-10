@@ -13,6 +13,10 @@ on:
     tags:
       - 'v*'
 
+# Read-only by default; only the release and publish jobs get more.
+permissions:
+  contents: read
+
 jobs:
   gate:
     runs-on: ubuntu-latest
@@ -62,6 +66,7 @@ jobs:
       - run: npm run build
       # An npm version is immutable — republishing is a hard error, so a re-run
       # (or a tag after the manual first publish) must skip what already landed.
+      # Once it is on npm, raise the `sanshain@<version>` pin in action.yml to it.
       - name: Publish to npm (trusted publishing, skipping published versions)
         run: |
           ver=$(node -p "require('./package.json').version")
