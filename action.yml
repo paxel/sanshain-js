@@ -52,6 +52,7 @@ runs:
       # A release that is on npm, so the code that runs is fixed by the Action's
       # ref and not by whatever npm has newest. Raised right after each publish
       # (release.yml); a project's own install is used only at this version.
+      # No install scripts run while npx fetches it and its dependencies.
       run: |
         set -f
-        npx --yes sanshain@2.5.1 $SANSHAIN_ACTION_COMMAND
+        npx --yes --ignore-scripts sanshain@2.5.1 $SANSHAIN_ACTION_COMMAND

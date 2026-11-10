@@ -12,7 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `annotations` in `sanshain.yaml` travel with provide (also `--dry-run`), require, bundle and catalog push, their `{{NAME}}` placeholders filled from `--set NAME=value` or `SANSHAIN_SET_NAME` (needs Sanshain Service 2.13.0 or later).
 
 ### Changed
-- The GitHub Action runs one pinned release of the package (`npx --yes sanshain@2.5.1`, raised after each release) instead of whatever version npm had newest; a project's own install is used only when it is that version.
+- The GitHub Action runs one pinned release of the package (`npx --yes --ignore-scripts sanshain@2.5.1`, raised after each release, without install scripts) instead of whatever version npm had newest; a project's own install is used only when it is that version.
 - A missing or broken `sanshain.yaml` (unreadable, invalid YAML, 1.x fields, failed validation) under `--best-effort` or `SANSHAIN_BEST_EFFORT` prints the error with the command's prefix (e.g. `Error providing spec: Configuration file not found: <path>`), then `Continuing (best effort)`, and exits 0 without a call, now without the `Warning loading config:` line and the skip notice that followed it. Such a file's own `bestEffort` and `strict` do not count, and `SANSHAIN_STRICT=true` makes it fail also with best effort. Under best effort a file that does not validate no longer fails over unknown fields because of its own `strict: true`. Without best effort a missing file fails, naming it, as before. The `--best-effort` help says so.
 
 ### Fixed

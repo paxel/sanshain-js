@@ -50,7 +50,7 @@ describe('the Action', () => {
   });
 
   it('runs one exact released version, never the newest on npm', () => {
-    const pinned = /npx --yes sanshain@(\d+)\.(\d+)\.(\d+) \$SANSHAIN_ACTION_COMMAND/.exec(step.run);
+    const pinned = /npx --yes --ignore-scripts sanshain@(\d+)\.(\d+)\.(\d+) \$SANSHAIN_ACTION_COMMAND/.exec(step.run);
     expect(pinned).not.toBeNull();
     // At most the version being built: the pin names a release that is already
     // on npm, and it is raised after the publish.
