@@ -14,20 +14,33 @@ On your protected-branch workflow, set the `ga` input so the publish is an immut
 
 ```yaml
 - name: Provide Spec
-  uses: paxel/sanshain/sanshain-js@v3 # Path to the action in this repo
+  uses: paxel/sanshain-js@summer
   with:
     command: provide
     token: ${{ secrets.SANSHAIN_TOKEN }}
     ga: 'true'
 ```
 
+### Publish GA on Trunk with autoGa
+
+With `autoGa: true` in `sanshain.yaml` the `trunk` (or `tag`) input is enough: such a build provides GA, every other build a snapshot. Leave `ga` empty — `ga: 'false'` keeps a snapshot even then. The token's user needs the `releaser` role, and a trunk build that changes the spec without a version bump fails with `409 immutable_ga` and the proposed version.
+
+```yaml
+- name: Provide Spec
+  uses: paxel/sanshain-js@summer
+  with:
+    command: provide
+    token: ${{ secrets.SANSHAIN_TOKEN }}
+    trunk: ${{ github.ref == 'refs/heads/main' }}
+```
+
 ### Publish Snapshot on Feature Branches
 
-Omit `ga` (or set it to `'false'`) — the default is always a snapshot:
+Omit `ga` — without `autoGa` the default is always a snapshot:
 
 ```yaml
 - name: Provide Snapshot
-  uses: paxel/sanshain/sanshain-js@v3
+  uses: paxel/sanshain-js@summer
   with:
     command: provide
     token: ${{ secrets.SANSHAIN_TOKEN }}
@@ -37,7 +50,7 @@ Omit `ga` (or set it to `'false'`) — the default is always a snapshot:
 
 ```yaml
 - name: Require Specs
-  uses: paxel/sanshain/sanshain-js@v3
+  uses: paxel/sanshain-js@summer
   with:
     command: require
     token: ${{ secrets.SANSHAIN_TOKEN }}
@@ -49,21 +62,42 @@ Needs `catalogInfo` in `sanshain.yaml` and Sanshain Service 2.4.0 or later:
 
 ```yaml
 - name: Push Catalog
-  uses: paxel/sanshain/sanshain-js@v3
+  uses: paxel/sanshain-js@summer
   with:
     command: catalog
     token: ${{ secrets.SANSHAIN_TOKEN }}
     trunk: ${{ github.ref == 'refs/heads/main' }}
 ```
 
+### Annotations
+
+The Action has no input for the `{{NAME}}` placeholders of the `annotations` in `sanshain.yaml`; set `SANSHAIN_SET_NAME` variables on the step instead (needs Sanshain Service 2.13.0 or later):
+
+```yaml
+- name: Provide Spec
+  uses: paxel/sanshain-js@summer
+  with:
+    command: provide
+    token: ${{ secrets.SANSHAIN_TOKEN }}
+  env:
+    SANSHAIN_SET_AREA: '7'
+    SANSHAIN_SET_ID: ${{ vars.REQUIREMENTS_ID }}
+```
+
 ### Inputs
 
-| Input               | Required | Default   | Description                                                        |
-|---------------------|----------|-----------|--------------------------------------------------------------------|
-| `command`           | yes      | —         | `provide`, `require` or `catalog` (needs Sanshain Service 2.4.0).  |
-| `token`             | no       | —         | Sanshain API token (or set the `SANSHAIN_TOKEN` env/secret).       |
-| `ga`                | no       | `'false'` | `'true'` publishes as immutable GA (maps to `SANSHAIN_GA`).        |
-| `working-directory` | no       | `'.'`     | Directory where `sanshain.yaml` is located.                        |
+| Input               | Required | Default   | Description                                                                                                                                         |
+|---------------------|----------|-----------|-----------------------------------------------------------------------------------------------------------------------------------------------------|
+| `command`           | yes      | —         | `provide`, `require` or `catalog` (needs Sanshain Service 2.4.0).                                                                                   |
+| `token`             | no       | —         | Sanshain API token (or set the `SANSHAIN_TOKEN` env/secret).                                                                                        |
+| `ga`                | no       | `''`      | `'true'` publishes as immutable GA, `'false'` keeps a snapshot despite `autoGa`; empty lets `autoGa` decide (maps to `SANSHAIN_GA`).                |
+| `trunk`             | no       | `''`      | `'true'` on trunk CI: this build maintains the main graph (maps to `SANSHAIN_TRUNK`).                                                               |
+| `tag`               | no       | `''`      | A sanshain-branch name for release/hotfix pipelines (maps to `SANSHAIN_TAG`); setting it with `trunk` records the build in neither, with a warning. |
+| `tickets`           | no       | `''`      | Ticket ids this build closes, comma-separated, stored with the version's origin (maps to `SANSHAIN_TICKETS`).                                       |
+| `note`              | no       | `''`      | One line of intent for this provide (maps to `SANSHAIN_NOTE`).                                                                                      |
+| `working-directory` | no       | `'.'`     | Directory where `sanshain.yaml` is located.                                                                                                         |
+
+An empty input (the default for all but `working-directory`) leaves the variable it maps to as the job or workflow set it; a non-empty input replaces it.
 
 ---
 
@@ -81,7 +115,7 @@ Needs `catalogInfo` in `sanshain.yaml` and Sanshain Service 2.4.0 or later:
 
 Sanshain 2.x has no branch model, so there is no branch detection in this client. What matters in a workflow:
 
-- **Provide**: the published version is read from the spec file (`info.version`, or the `// sanshain-version:` comment for proto). The workflow only decides *stability* via the `ga` input.
+- **Provide**: the published version is read from the spec file (`info.version`, or the `// sanshain-version:` comment for proto). The workflow only decides *stability* via the `ga` input, or via `trunk`/`tag` with `autoGa: true`.
 - **Require**: each `requires` entry in `sanshain.yaml` pins an exact version; the same versions resolve on every branch and every runner.
 
 ## How Files are Handled in CI

@@ -30,6 +30,41 @@ export function sanitize(text: string): string {
 }
 
 /**
+ * Text from the server as it may be printed: every control character but the
+ * tab becomes `?`, so a message cannot start a forged log line or carry
+ * terminal escape sequences.
+ */
+export function printable(text: string): string {
+  return Array.from(text, (char) => {
+    const code = char.codePointAt(0) ?? 0;
+    return (code < 32 && code !== 9) || (code >= 127 && code <= 159) ? '?' : char;
+  }).join('');
+}
+
+/** JSON from the server, with every string in it made printable. */
+export function parseServerJson(body: string): any {
+  return JSON.parse(body, (_key, value) => (typeof value === 'string' ? printable(value) : value));
+}
+
+/**
+ * A URL as it may be printed: without the user and password it can carry,
+ * which belong in no build log. An unparsable URL keeps only what follows
+ * its last `@`.
+ */
+export function displayUrl(url: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return url.slice(url.lastIndexOf('@') + 1);
+  }
+  if (!parsed.username && !parsed.password) return url;
+  parsed.username = '';
+  parsed.password = '';
+  return parsed.toString();
+}
+
+/**
  * Rewrite CRLF (and stray CR) to LF before upload. Sanshain compares provided
  * content byte for byte, so a Windows checkout of an otherwise identical file
  * would hash differently and provoke a spurious 409 version conflict.

@@ -1,4 +1,4 @@
-import { UnknownFieldsError, envFlag, loadConfig, resolveOrigin, resolveStability, resolveStream } from '../src/config';
+import { UnknownFieldsError, envFlag, loadConfig, resolveOrigin, resolveStability, resolveStream, streamDeclared } from '../src/config';
 import fs from 'fs';
 import path from 'path';
 
@@ -85,6 +85,42 @@ requires:
     expect(() => loadConfig(testYamlPath)).toThrow(
       "requires[0] (user-service): missing 'version' — Sanshain 2.0 pins exact versions; add e.g. version: 1.2.0 (list available: GET /producers/user-service/versions)"
     );
+  });
+
+  it('should reject an unknown requires apiType, and take every provide spelling', () => {
+    const entry = (apiType: string) => `
+sanshainUrl: http://localhost:3000
+serviceName: test-service
+requires:
+  - serviceName: user-service
+    apiType: ${apiType}
+    version: 1.0.0
+    outputDirectory: gen
+    endpoints:
+      - method: GET
+        path: /api
+`;
+    writeConfig(entry('graphql'));
+    expect(() => loadConfig(testYamlPath)).toThrow(
+      "requires[0] (user-service): unsupported apiType 'graphql' — use openapi, asyncapi or proto (grpc means proto)"
+    );
+    for (const apiType of ['openapi', 'asyncapi', 'proto', 'grpc']) {
+      writeConfig(entry(apiType));
+      expect(loadConfig(testYamlPath).requires?.[0].apiType).toBe(apiType);
+    }
+  });
+
+  it('should reject an unknown provide apiType, also on a retired entry', () => {
+    writeConfig('sanshainUrl: http://localhost:3000\nserviceName: test-service\nprovides:\n  - file: api.raml\n    apiType: raml\n');
+    expect(() => loadConfig(testYamlPath)).toThrow(
+      "provides[0]: unsupported apiType 'raml' — use openapi, asyncapi or proto (grpc means proto)"
+    );
+    writeConfig('sanshainUrl: http://localhost:3000\nserviceName: test-service\nprovide:\n  retired: true\n  apiType: soap\n');
+    expect(() => loadConfig(testYamlPath)).toThrow("provide: unsupported apiType 'soap'");
+    for (const apiType of ['openapi', 'asyncapi', 'proto', 'grpc']) {
+      writeConfig(`sanshainUrl: http://localhost:3000\nserviceName: test-service\nprovides:\n  - file: spec\n    apiType: ${apiType}\n`);
+      expect(loadConfig(testYamlPath).provides?.[0].apiType).toBe(apiType);
+    }
   });
 
   it('should reject a non-exact version pin', () => {
@@ -252,6 +288,68 @@ describe('Stability resolution (ga switch)', () => {
     process.env.SANSHAIN_GA = 'false';
     expect(resolveStability(true)).toBe('ga');
   });
+
+  it('autoGa makes a build that declares a stream GA', () => {
+    expect(resolveStability(undefined, true, true)).toBe('ga');
+    expect(resolveStability(false, true, true)).toBe('ga');
+  });
+
+  it('autoGa without a declared stream stays a snapshot', () => {
+    expect(resolveStability(undefined, true, false)).toBe('snapshot');
+  });
+
+  it('a declared stream without autoGa stays a snapshot', () => {
+    expect(resolveStability(undefined, false, true)).toBe('snapshot');
+  });
+
+  it('an explicit SANSHAIN_GA=false beats autoGa, a blank one does not', () => {
+    process.env.SANSHAIN_GA = 'false';
+    expect(resolveStability(undefined, true, true)).toBe('snapshot');
+    // Any non-blank value is set and read like every switch: off.
+    process.env.SANSHAIN_GA = 'yes';
+    expect(resolveStability(undefined, true, true)).toBe('snapshot');
+    process.env.SANSHAIN_GA = '  ';
+    expect(resolveStability(undefined, true, true)).toBe('ga');
+  });
+
+  it('SANSHAIN_GA=true makes GA without autoGa or a stream', () => {
+    process.env.SANSHAIN_GA = 'true';
+    expect(resolveStability(undefined, false, false)).toBe('ga');
+  });
+});
+
+describe('streamDeclared (what autoGa looks at)', () => {
+  const originalEnv = process.env;
+
+  beforeEach(() => {
+    process.env = { ...originalEnv };
+    delete process.env.SANSHAIN_TRUNK;
+    delete process.env.SANSHAIN_TAG;
+  });
+
+  afterAll(() => {
+    process.env = originalEnv;
+  });
+
+  it('is false without trunk or a tag', () => {
+    expect(streamDeclared()).toBe(false);
+    expect(streamDeclared(false, '  ')).toBe(false);
+  });
+
+  it('is true for trunk or a tag, from the flag or the environment', () => {
+    expect(streamDeclared(true)).toBe(true);
+    expect(streamDeclared(false, 'release-1')).toBe(true);
+    process.env.SANSHAIN_TRUNK = '1';
+    expect(streamDeclared()).toBe(true);
+    delete process.env.SANSHAIN_TRUNK;
+    process.env.SANSHAIN_TAG = 'release-1';
+    expect(streamDeclared()).toBe(true);
+  });
+
+  it('is true for both, although that sends neither', () => {
+    expect(streamDeclared(true, 'release-1')).toBe(true);
+    expect(resolveStream(true, 'release-1')).toEqual({});
+  });
 });
 
 describe('SANSHAIN_* boolean switches', () => {
@@ -335,9 +433,9 @@ describe('unknown fields (the puzzled cat)', () => {
     process.env = originalEnv;
   });
 
-  const load = (yaml: string) => {
+  const load = (yaml: string, bestEffort?: boolean) => {
     fs.writeFileSync(testYamlPath, yaml);
-    return loadConfig(testYamlPath);
+    return loadConfig(testYamlPath, bestEffort);
   };
 
   it('prints the cat once for a single unknown field and carries on', () => {
@@ -426,6 +524,32 @@ describe('unknown fields (the puzzled cat)', () => {
     );
   });
 
+  it('under best effort the strict of a file that does not validate does not count', () => {
+    expect(() => load(`strict: true\n${typoedVersion}`, true)).toThrow("requires[0] (users): missing 'version'");
+    expect(stderr.mock.calls[0][0]).toBe(cat("sanshain.yaml: unknown field 'requires[0].verison' - ignored"));
+  });
+
+  it('under best effort SANSHAIN_STRICT still rejects the unknown fields', () => {
+    process.env.SANSHAIN_STRICT = 'true';
+    expect(() => load(typoedVersion, true)).toThrow(UnknownFieldsError);
+    expect(stderr.mock.calls[0][0]).toBe(cat("sanshain.yaml: unknown field 'requires[0].verison' - rejected (strict)"));
+  });
+
+  it('under best effort strict still rejects the unknown fields of a file that validates', () => {
+    expect(() => load('sanshainUrl: http://localhost:3000\nserviceName: svc\nstrict: true\ncatalogInf: x\n', true)).toThrow(
+      UnknownFieldsError
+    );
+    expect(stderr.mock.calls[0][0]).toBe(cat("sanshain.yaml: unknown field 'catalogInf' - rejected (strict)"));
+  });
+
+  it.each(['~\n', 'just text\n', '- sanshainUrl: http://localhost:3000\n'])(
+    'a document that is no mapping (%j) is an error naming the file',
+    (yaml) => {
+      process.env.SANSHAIN_URL = 'http://localhost:3000';
+      expect(() => load(yaml)).toThrow(`${testYamlPath} must be a mapping of settings, such as sanshainUrl: <url>`);
+    }
+  );
+
   it('the cat shows even when sanshainUrl is missing', () => {
     expect(() => load('serviceName: svc\nsanshainUrll: http://x\n')).toThrow('Missing required field: sanshainUrl');
     expect(stderr.mock.calls[0][0]).toBe(cat("sanshain.yaml: unknown field 'sanshainUrll' - ignored"));
@@ -453,6 +577,7 @@ describe('unknown fields (the puzzled cat)', () => {
         'insecure: true',
         'combine: true',
         'catalogInfo: catalog-info.yaml',
+        'autoGa: true',
         'provides:',
         '  - file: a.yaml',
         '    combine: true',
@@ -460,6 +585,67 @@ describe('unknown fields (the puzzled cat)', () => {
       ].join('\n')
     );
     expect(stderr).not.toHaveBeenCalled();
+  });
+});
+
+describe('annotations in sanshain.yaml', () => {
+  const testYamlPath = path.resolve(__dirname, 'test-annotations-sanshain.yaml');
+  let stderr: jest.SpyInstance;
+  const load = (annotations: string, extra = '') => {
+    fs.writeFileSync(testYamlPath, `sanshainUrl: http://localhost:3000\nserviceName: svc\n${extra}annotations:\n${annotations}`);
+    return loadConfig(testYamlPath);
+  };
+
+  beforeEach(() => {
+    stderr = jest.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    stderr.mockRestore();
+    if (fs.existsSync(testYamlPath)) fs.unlinkSync(testYamlPath);
+  });
+
+  it('reads the entries as written, placeholders unfilled', () => {
+    const config = load(
+      '  - scope: version\n    name: requirements\n    value: "http://solar.system/id-{{AREA}}/requirements/{{ID}}"\n' +
+        '  - scope: system\n    name: jenkins\n    value: "https://jenkins.corp/job/payments"\n'
+    );
+    expect(config.annotations).toEqual([
+      { scope: 'version', name: 'requirements', value: 'http://solar.system/id-{{AREA}}/requirements/{{ID}}' },
+      { scope: 'system', name: 'jenkins', value: 'https://jenkins.corp/job/payments' }
+    ]);
+    expect(stderr).not.toHaveBeenCalled();
+  });
+
+  it('an empty list is fine', () => {
+    expect(load('  []\n').annotations).toEqual([]);
+  });
+
+  it('a missing field names the entry', () => {
+    expect(() => load('  - scope: system\n    name: jenkins\n')).toThrow("annotations[0] (jenkins): missing 'value'");
+    expect(() => load('  - scope: system\n    value: x\n')).toThrow("annotations[0]: missing 'name'");
+  });
+
+  it('a value that is not a string is an error, not converted', () => {
+    expect(() => load('  - scope: system\n    name: build\n    value: 42\n')).toThrow("annotations[0] (build): 'value' must be a string");
+    expect(() => load('  - scope: system\n    name: true\n    value: x\n')).toThrow("annotations[0]: 'name' must be a string");
+  });
+
+  it('another scope names the entry', () => {
+    expect(() => load('  - scope: version\n    name: a\n    value: x\n  - scope: global\n    name: b\n    value: y\n')).toThrow(
+      "annotations[1] (b): scope 'global' is not supported — use version or system"
+    );
+  });
+
+  it('a list of something else, or no list, is an error', () => {
+    expect(() => load('  - just text\n')).toThrow('annotations[0]: must be an entry with scope, name and value');
+    expect(() => load('  scope: system\n')).toThrow('Field annotations must be an array');
+  });
+
+  it('an extra key in an entry is an unknown field, failing only under strict', () => {
+    load('  - scope: system\n    name: a\n    value: x\n    colour: red\n');
+    expect(stderr.mock.calls[0][0]).toContain("unknown field 'annotations[0].colour' - ignored");
+    expect(() => load('  - scope: system\n    name: a\n    value: x\n    colour: red\n', 'strict: true\n')).toThrow(UnknownFieldsError);
   });
 });
 

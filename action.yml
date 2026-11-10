@@ -9,13 +9,13 @@ inputs:
     description: 'Sanshain API token (optional if set via SANSHAIN_TOKEN secret)'
     required: false
   ga:
-    description: 'Set to "true" to provide as immutable GA instead of the default snapshot (maps to SANSHAIN_GA). Typically set on protected-branch pipelines.'
+    description: 'Set to "true" to provide as immutable GA instead of the default snapshot (maps to SANSHAIN_GA). Typically set on protected-branch pipelines. Leave it empty to let autoGa in sanshain.yaml decide; "false" keeps a snapshot even then.'
     required: false
-    default: 'false'
+    default: ''
   trunk:
-    description: 'Set to "true" on trunk CI: this build maintains the main graph (maps to SANSHAIN_TRUNK).'
+    description: 'Set to "true" on trunk CI: this build maintains the main graph (maps to SANSHAIN_TRUNK). Leave it empty to keep a SANSHAIN_TRUNK set on the job or workflow.'
     required: false
-    default: 'false'
+    default: ''
   tag:
     description: 'A sanshain-branch name for release/hotfix pipelines (maps to SANSHAIN_TAG). Mutually exclusive with trunk: setting both records the build in neither, with a warning (fails under SANSHAIN_STRICT).'
     required: false
@@ -39,12 +39,16 @@ runs:
     - name: Run Sanshain CLI
       shell: bash
       working-directory: ${{ inputs.working-directory }}
+      # An empty input keeps the variable the job or workflow set.
       env:
         SANSHAIN_TOKEN: ${{ inputs.token || env.SANSHAIN_TOKEN }}
-        SANSHAIN_GA: ${{ inputs.ga }}
-        SANSHAIN_TRUNK: ${{ inputs.trunk }}
-        SANSHAIN_TAG: ${{ inputs.tag }}
-        SANSHAIN_TICKETS: ${{ inputs.tickets }}
-        SANSHAIN_NOTE: ${{ inputs.note }}
+        SANSHAIN_GA: ${{ inputs.ga || env.SANSHAIN_GA }}
+        SANSHAIN_TRUNK: ${{ inputs.trunk || env.SANSHAIN_TRUNK }}
+        SANSHAIN_TAG: ${{ inputs.tag || env.SANSHAIN_TAG }}
+        SANSHAIN_TICKETS: ${{ inputs.tickets || env.SANSHAIN_TICKETS }}
+        SANSHAIN_NOTE: ${{ inputs.note || env.SANSHAIN_NOTE }}
+        # The command reaches bash as data, never as script text: split into words, no globbing.
+        SANSHAIN_ACTION_COMMAND: ${{ inputs.command }}
       run: |
-        npx sanshain ${{ inputs.command }}
+        set -f
+        npx sanshain $SANSHAIN_ACTION_COMMAND

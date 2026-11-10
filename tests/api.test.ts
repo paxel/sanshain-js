@@ -125,6 +125,16 @@ describe('Sanshain API Client', () => {
     expect(mockedAxios.get).toHaveBeenCalledWith('/version', expect.any(Object));
   });
 
+  it('names the server in the upgrade hint without the password of its URL', async () => {
+    const withPassword = new SanshainClient('http://ci:pw-in-url@localhost:3000', 'test-token');
+    mockedAxios.post.mockRejectedValue({ response: { status: 400, data: '{}', headers: {} } });
+    mockedAxios.get.mockResolvedValue({ status: 200, data: JSON.stringify({ version: '1.7.3' }), headers: {} });
+
+    await expect(
+      withPassword.provide({ producername: 'test-service', openapi_yaml: 'spec: content', stability: 'snapshot' })
+    ).rejects.toThrow('Sanshain server at http://localhost:3000/ is 1.7.3;');
+  });
+
   it('should only check the server version once per client instance', async () => {
     mockedAxios.get
       .mockRejectedValueOnce({
@@ -216,6 +226,101 @@ describe('Sanshain-Warning collection', () => {
       headers: {}
     });
     expect((await client.pushCatalog('s', 'x')).recorded).toBe(false);
+  });
+
+  describe('text from the server is made printable', () => {
+    const forged = 'boom\n✓ Provided svc 9.9.9\u001b[2K\r\u009b\u007f\tend';
+    const shown = 'boom?✓ Provided svc 9.9.9?[2K???\tend';
+    let client: SanshainClient;
+
+    beforeEach(() => {
+      jest.clearAllMocks();
+      mockedAxios.create.mockReturnValue(mockedAxios as any);
+      client = new SanshainClient('http://localhost:3000');
+    });
+
+    it('in an error message and a proposed version', async () => {
+      mockedAxios.post.mockRejectedValue({
+        response: { status: 409, data: JSON.stringify({ error: forged, proposed_version: '1.3.0\nx' }), headers: {} }
+      });
+      mockedAxios.get.mockResolvedValue({ status: 200, data: JSON.stringify({ version: '2.0.0' }), headers: {} });
+
+      const error = (await client
+        .provide({ producername: 'p', openapi_yaml: 'x', stability: 'ga' })
+        .catch((e: unknown) => e)) as VersionConflictError;
+
+      expect(error).toBeInstanceOf(VersionConflictError);
+      expect(error.message).toBe(shown);
+      expect(error.proposedVersion).toBe('1.3.0?x');
+    });
+
+    it('in a catalog answer', async () => {
+      mockedAxios.put.mockResolvedValueOnce({
+        status: 200,
+        data: JSON.stringify({ system: forged, trunk: false, resources: ['resource:db\nx'] }),
+        headers: {}
+      });
+
+      const pushed = await client.pushCatalog('s', 'x');
+
+      expect(pushed.system).toBe(shown);
+      expect(pushed.resources).toEqual(['resource:db?x']);
+    });
+
+    it('in a provide answer and a server version', async () => {
+      mockedAxios.post.mockResolvedValueOnce({
+        status: 202,
+        data: JSON.stringify({ version: '1.0.0\n', stability: 'snapshot', content_hash: 'h', changes: {} }),
+        headers: {}
+      });
+      expect((await client.provide({ producername: 'p', openapi_yaml: 'x', stability: 'snapshot' }))!.version).toBe('1.0.0?');
+
+      mockedAxios.post.mockRejectedValue({ response: { status: 404, data: '{}', headers: {} } });
+      mockedAxios.get.mockResolvedValue({ status: 200, data: JSON.stringify({ version: '1.7.3\u001b' }), headers: {} });
+      await expect(client.provide({ producername: 'p', openapi_yaml: 'x', stability: 'snapshot' })).rejects.toThrow(
+        'is 1.7.3?; this client requires Sanshain 2.x'
+      );
+    });
+
+    it('in a Sanshain-Warning', () => {
+      expect(warningsOf({ headers: { 'sanshain-warning': '\u001b[31mred' } })).toEqual(['?[31mred']);
+      expect(warningsOf({ request: { res: { headersDistinct: { 'sanshain-warning': ['a\u0007', 'b'] } } } })).toEqual(['a?', 'b']);
+    });
+  });
+
+  it('over real HTTP the token travels only in the Authorization header, never in a URL', async () => {
+    const http = require('http');
+    const realAxios = jest.requireActual('axios');
+    const seen: { url: string; authorization?: string }[] = [];
+    const server = http.createServer((req: any, res: any) => {
+      seen.push({ url: req.url, authorization: req.headers.authorization });
+      res.statusCode = req.method === 'GET' ? 200 : req.method === 'PUT' ? 200 : 202;
+      res.end(
+        req.method === 'PUT'
+          ? JSON.stringify({ system: 's', trunk: false, resources: [] })
+          : JSON.stringify({ version: '1.0.0', stability: 'snapshot', content_hash: 'h', changes: {} })
+      );
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    try {
+      mockedAxios.create.mockImplementation((config: any) => realAxios.create(config));
+      const client = new SanshainClient(`http://127.0.0.1:${server.address().port}`, 'san_secret');
+      await client.provide({ producername: 'p', openapi_yaml: 'x', stability: 'snapshot' });
+      await client.require('c', 'p', '1.0.0', '/x', 'GET', false, undefined, undefined, { trunk: true }, undefined, [
+        { scope: 'system', name: 'team', value: 'blue' }
+      ]);
+      await client.pushCatalog('s', 'x');
+
+      expect(seen).toHaveLength(3);
+      for (const request of seen) {
+        expect(request.authorization).toBe('Bearer san_secret');
+        expect(request.url).not.toContain('san_secret');
+      }
+      expect(seen[1].url).toContain('annotations=');
+    } finally {
+      mockedAxios.create.mockReset();
+      await new Promise((resolve) => server.close(resolve));
+    }
   });
 
   it('over real HTTP, repeated header lines arrive as separate warnings', async () => {

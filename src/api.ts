@@ -1,6 +1,6 @@
 import axios, { AxiosInstance, AxiosResponse } from 'axios';
 import { load } from 'js-yaml';
-import { compress, decompress, normalizeLineEndings, sanitize } from './utils';
+import { compress, decompress, displayUrl, normalizeLineEndings, parseServerJson, printable, sanitize } from './utils';
 
 export type Stability = 'snapshot' | 'ga';
 
@@ -50,10 +50,39 @@ function withoutOrigin(payload: any): any {
   return copy;
 }
 
+/** An error response body as text, whatever form the HTTP layer handed it over in. */
+function bodyText(body: unknown): string {
+  return typeof body === 'string' ? body : Buffer.isBuffer(body) ? body.toString('utf8') : JSON.stringify(body ?? '');
+}
+
 /** Whether a 422 body names one of the origin fields as unknown (a service before 2.9.0). */
 export function namesOriginField(body: unknown): boolean {
-  const text = typeof body === 'string' ? body : Buffer.isBuffer(body) ? body.toString('utf8') : JSON.stringify(body ?? '');
+  const text = bodyText(body);
   return ORIGIN_FIELDS.some((field) => text.includes(`unknown field \`${field}\``));
+}
+
+/**
+ * One annotation from sanshain.yaml, its placeholders filled: a named value
+ * Sanshain stores with the provided version (`version`) or with the system
+ * (`system`). Needs Sanshain Service 2.13.0 or later; the service checks the
+ * limits (20 per scope, name and value length) and answers 400 naming the entry.
+ */
+export interface Annotation {
+  scope: 'version' | 'system';
+  name: string;
+  value: string;
+}
+
+/** Printed once per client when an older service refused the annotations and the call was repeated without them. */
+export const ANNOTATIONS_DROPPED_WARNING = 'Sanshain Service before 2.13.0 does not take annotations; sending without them';
+
+/**
+ * Whether a refusal names annotations as the unknown field (a service before
+ * 2.13.0). Matched exactly: the refusal of a 2.9–2.12 service lists every
+ * field it knows after "expected one of", so a bare field name is not enough.
+ */
+export function namesAnnotationsField(body: unknown): boolean {
+  return bodyText(body).includes('unknown field `annotations`');
 }
 
 export interface ProvidePayload extends Origin {
@@ -63,6 +92,8 @@ export interface ProvidePayload extends Origin {
   dry_run?: boolean;
   trunk?: boolean;
   tag?: string;
+  /** Every annotation of the build, both scopes; omitted when none. */
+  annotations?: Annotation[];
 }
 
 export interface ProvideAsyncApiPayload extends Origin {
@@ -72,6 +103,7 @@ export interface ProvideAsyncApiPayload extends Origin {
   dry_run?: boolean;
   trunk?: boolean;
   tag?: string;
+  annotations?: Annotation[];
 }
 
 export interface ProvideProtoPayload extends Origin {
@@ -81,6 +113,7 @@ export interface ProvideProtoPayload extends Origin {
   dry_run?: boolean;
   trunk?: boolean;
   tag?: string;
+  annotations?: Annotation[];
 }
 
 /**
@@ -134,6 +167,14 @@ export interface ProvideResponseBody {
   harvested_subscriptions?: HarvestedSubscription[];
 }
 
+/**
+ * A require's apiType as the service's contract spells it: `grpc`, which a
+ * provide accepts too, is `proto` on the wire.
+ */
+function wireApiType(apiType?: string): string | undefined {
+  return apiType === 'grpc' ? 'proto' : apiType;
+}
+
 /** The only conversion a require can ask for: an AsyncAPI channel rendered as OpenAPI. */
 export type RequireFormat = 'openapi';
 
@@ -163,6 +204,8 @@ export interface RequireBundlePayload {
   dry_run?: boolean;
   trunk?: boolean;
   tag?: string;
+  /** The requiring Consumer's annotations; only the system ones are sent. */
+  annotations?: Annotation[];
 }
 
 /**
@@ -200,6 +243,8 @@ export interface CatalogPushPayload {
   catalog_info_yaml: string;
   /** Only on a trunk build; absent otherwise. Never a tag: the server refuses unknown fields. */
   trunk?: boolean;
+  /** The system's annotations, system scope only; omitted when none. */
+  annotations?: Annotation[];
 }
 
 /** The periphery the server now records for the system. */
@@ -223,11 +268,14 @@ export interface CatalogPushResponse {
  */
 export function warningsOf(response: any): string[] {
   const distinct = response?.request?.res?.headersDistinct?.['sanshain-warning'];
-  if (Array.isArray(distinct)) return distinct.map(String);
+  if (Array.isArray(distinct)) return distinct.map((v) => printable(String(v)));
   const value = response?.headers?.['sanshain-warning'];
   if (value === undefined || value === null) return [];
-  return Array.isArray(value) ? value.map(String) : [String(value)];
+  return (Array.isArray(value) ? value : [value]).map((v) => printable(String(v)));
 }
+
+/** The text of the service's 403 when the caller lacks the releaser role. */
+const RELEASER_REFUSAL = "requires the 'releaser' role";
 
 interface ErrorBody {
   error?: string;
@@ -236,9 +284,9 @@ interface ErrorBody {
 
 /** Whether a server version string is older than MAJOR.MINOR. */
 function versionBelow(version: string, major: number, minor: number): boolean {
-  const [maj, min] = version.replace(/^v/, '').split('.').map((part) => parseInt(part, 10));
-  if (isNaN(maj)) return false;
-  return maj < major || (maj === major && (isNaN(min) ? 0 : min) < minor);
+  const [maj, min = 0] = version.replace(/^v/, '').split('.').map((part) => Number.parseInt(part, 10));
+  if (Number.isNaN(maj)) return false;
+  return maj < major || (maj === major && (Number.isNaN(min) ? 0 : min) < minor);
 }
 
 export class SanshainClient {
@@ -249,6 +297,8 @@ export class SanshainClient {
   private oldServerMessage: string | null = null;
   private serverVersion: string | null = null;
   private warnings: string[] = [];
+  /** Set once the service refused annotations: later calls send none. */
+  private annotationsRefused = false;
 
   constructor(baseUrl: string, token?: string, insecure: boolean = false) {
     this.token = token;
@@ -293,6 +343,40 @@ export class SanshainClient {
     this.warnings.push(...warningsOf(response));
   }
 
+  /**
+   * What a call may send of the annotations: all of them on a provide, only
+   * the system ones on any other call (the service refuses a version one
+   * there), and none once the service refused them.
+   */
+  private annotationsToSend(annotations: Annotation[] | undefined, provide: boolean): Annotation[] {
+    if (this.annotationsRefused || !annotations) return [];
+    return provide ? annotations : annotations.filter((a) => a.scope === 'system');
+  }
+
+  /** The payload carrying what it may send of its annotations; without the field when that is none. */
+  private withAnnotations<T extends { annotations?: Annotation[] }>(payload: T, provide: boolean): T {
+    const { annotations, ...rest } = payload;
+    const send = this.annotationsToSend(annotations, provide);
+    return (send.length > 0 ? { ...rest, annotations: send } : rest) as T;
+  }
+
+  /**
+   * Whether a failed call that sent annotations was an older service refusing
+   * them by name with the given status. From then on this client sends none;
+   * the first refusal prints the warning, a plain log line strict mode does
+   * not fail on (like the origin fallback).
+   */
+  private refusedAnnotations(sent: Annotation[] | undefined, error: any, status: number): boolean {
+    if (!sent?.length || error?.response?.status !== status || !namesAnnotationsField(error.response.data)) {
+      return false;
+    }
+    if (!this.annotationsRefused) {
+      this.annotationsRefused = true;
+      console.warn(`⚠ ${ANNOTATIONS_DROPPED_WARNING}`);
+    }
+    return true;
+  }
+
   private async decodeBody(response: { data: any; headers?: any }): Promise<string> {
     let body = response.data;
     if (response.headers?.['content-encoding'] === 'gzip' && (body instanceof Buffer || body instanceof Uint8Array)) {
@@ -315,7 +399,7 @@ export class SanshainClient {
 
   private parseErrorBody(body: string): ErrorBody {
     try {
-      const parsed = JSON.parse(body);
+      const parsed = parseServerJson(body);
       if (parsed && typeof parsed === 'object') {
         return parsed as ErrorBody;
       }
@@ -342,13 +426,13 @@ export class SanshainClient {
         validateStatus: (status) => status === 200
       });
       const body = await this.decodeBody(response);
-      const parsed = JSON.parse(body);
+      const parsed = parseServerJson(body);
       const serverVersion: string | undefined = parsed?.version;
       if (serverVersion) {
         this.serverVersion = serverVersion;
-        const major = parseInt(serverVersion.split('.')[0], 10);
-        if (!isNaN(major) && major < 2) {
-          this.oldServerMessage = `Sanshain server at ${this.baseUrl} is ${serverVersion}; this client requires Sanshain 2.x — upgrade the server.`;
+        const major = Number.parseInt(serverVersion.split('.')[0], 10);
+        if (!Number.isNaN(major) && major < 2) {
+          this.oldServerMessage = `Sanshain server at ${displayUrl(this.baseUrl)} is ${serverVersion}; this client requires Sanshain 2.x — upgrade the server.`;
         }
       }
     } catch {
@@ -386,7 +470,10 @@ export class SanshainClient {
         `Absent endpoint (410): ${serverMessage} — the pinned version exists but deliberately does not include the requested endpoint(s).`
       );
     }
-    if (status === 403) {
+    // Only the refusal for want of the role gets the hint: both service
+    // messages (GA provide, retire) contain this text. Any other 403, such as
+    // a read-only token's, already says what to do.
+    if (status === 403 && serverMessage.includes(RELEASER_REFUSAL)) {
       // The remedy is a role grant — nothing the Producer can change in its
       // own repository — so the message has to name it.
       return new Error(
@@ -394,8 +481,11 @@ export class SanshainClient {
           "Publishing GA requires the 'releaser' role; retiring requires it too, or a maintainer " +
           'grant on the Producer. Grant the role to the user or token this build authenticates as ' +
           '(administrators and root always hold it), or publish as a snapshot by leaving ' +
-          '--ga / SANSHAIN_GA unset.'
+          '--ga / SANSHAIN_GA unset and autoGa off (or setting SANSHAIN_GA=false).'
       );
+    }
+    if (status === 403) {
+      return new Error(`Refused (403): ${serverMessage}`);
     }
     return new Error(`Request failed with status ${status}: ${sanitize(bodyText)}`);
   }
@@ -415,8 +505,8 @@ export class SanshainClient {
   /**
    * Declare that the Producer no longer provides an API family — an ordinary
    * provide call for that family carrying `retired: true` and no document. It
-   * deliberately has no way to carry a body, a stability or a stream, which
-   * the server refuses alongside `retired` with 400. Gated like releasing:
+   * deliberately has no way to carry a body, a stability, a stream or
+   * annotations, which the server refuses alongside `retired` with 400. Gated like releasing:
    * the caller needs the 'releaser' role — which a release pipeline already
    * holds — or a maintainer grant on this Producer, or the server answers 403.
    */
@@ -441,7 +531,7 @@ export class SanshainClient {
       throw await this.translateError(error);
     }
     try {
-      return JSON.parse(await this.decodeBody(response)) as RetiredProtocol;
+      return parseServerJson(await this.decodeBody(response)) as RetiredProtocol;
     } catch {
       return null;
     }
@@ -456,10 +546,12 @@ export class SanshainClient {
     systemname: string,
     catalogInfoYaml: string,
     stream?: Stream,
-    compression: boolean = false
+    compression: boolean = false,
+    annotations?: Annotation[]
   ): Promise<CatalogPushResponse> {
-    const payload: CatalogPushPayload = { catalog_info_yaml: catalogInfoYaml };
-    if (stream?.trunk) payload.trunk = true;
+    const draft: CatalogPushPayload = { catalog_info_yaml: catalogInfoYaml, annotations };
+    if (stream?.trunk) draft.trunk = true;
+    const payload = this.withAnnotations(draft, false);
 
     let data: any = payload;
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -474,6 +566,9 @@ export class SanshainClient {
       this.collectWarnings(response);
     } catch (error: any) {
       this.collectWarnings(error?.response);
+      if (this.refusedAnnotations(payload.annotations, error, 422)) {
+        return this.pushCatalog(systemname, catalogInfoYaml, stream, compression);
+      }
       if (error?.response?.status === 404) {
         await this.diagnoseOldServer();
         const server = this.serverVersion ? `server is ${this.serverVersion}` : 'server version unknown';
@@ -481,11 +576,12 @@ export class SanshainClient {
       }
       throw await this.translateError(error);
     }
-    const pushed = JSON.parse(await this.decodeBody(response)) as CatalogPushResponse;
+    const pushed = parseServerJson(await this.decodeBody(response)) as CatalogPushResponse;
     return { ...pushed, recorded: pushed.recorded !== false };
   }
 
-  private async postProvide(url: string, payload: any, compression: boolean = false): Promise<ProvideResponseBody | null> {
+  private async postProvide(url: string, draft: any, compression: boolean = false): Promise<ProvideResponseBody | null> {
+    const payload = this.withAnnotations(draft, true);
     let data: any = payload;
     const headers: Record<string, string> = {
       'Content-Type': 'application/json'
@@ -503,9 +599,15 @@ export class SanshainClient {
       this.collectWarnings(response);
     } catch (error: any) {
       this.collectWarnings(error?.response);
-      // A service before 2.9.0 refuses the origin fields by name: the provide
-      // must not fail for a fact the service cannot store, so it is repeated
-      // without them.
+      // An older service refuses a field it does not know by name, one field
+      // per answer: annotations before 2.13.0, the origin before 2.9.0. The
+      // provide must not fail for a fact the service cannot store, so it is
+      // repeated without that field; a 2.8 service refuses both, in either
+      // order. Annotations first: the refusal of a 2.9–2.12 service lists the
+      // origin fields among those it expects.
+      if (this.refusedAnnotations(payload.annotations, error, 422)) {
+        return this.postProvide(url, payload, compression);
+      }
       if (error?.response?.status === 422 && hasOrigin(payload) && namesOriginField(error.response.data)) {
         console.warn("⚠ Sanshain Service before 2.9.0 does not take the build's origin; providing without it");
         return this.postProvide(url, withoutOrigin(payload), compression);
@@ -515,7 +617,7 @@ export class SanshainClient {
     try {
       const body = await this.decodeBody(response);
       if (typeof body === 'string') {
-        return JSON.parse(body) as ProvideResponseBody;
+        return parseServerJson(body) as ProvideResponseBody;
       }
       return body as ProvideResponseBody;
     } catch {
@@ -533,17 +635,20 @@ export class SanshainClient {
     api_type?: string,
     etag?: string,
     stream?: Stream,
-    format?: RequireFormat
+    format?: RequireFormat,
+    annotations?: Annotation[]
   ): Promise<RequireResult> {
     let url = '/require';
-    if (api_type === 'asyncapi') {
+    const type = wireApiType(api_type);
+    if (type === 'asyncapi') {
       url = '/require/asyncapi';
-    } else if (api_type === 'proto') {
+    } else if (type === 'proto') {
       url = '/require/grpc';
     }
 
     // Unlike the bundle, the single-endpoint require reads its stream from
-    // the query string.
+    // the query string — and its annotations, as a JSON array.
+    const sentAnnotations = this.annotationsToSend(annotations, false);
     const params = {
       consumername,
       producername,
@@ -552,7 +657,8 @@ export class SanshainClient {
       method,
       dry_run,
       ...streamFields(stream),
-      ...(format ? { format } : {})
+      ...(format ? { format } : {}),
+      ...(sentAnnotations.length > 0 ? { annotations: JSON.stringify(sentAnnotations) } : {})
     };
 
     const headers: Record<string, string> = {};
@@ -571,6 +677,12 @@ export class SanshainClient {
       this.collectWarnings(response);
     } catch (error: any) {
       this.collectWarnings(error?.response);
+      // A service before 2.13.0 refuses the unknown annotations parameter
+      // with 400 — checked before the format refusal, since it lists format
+      // among the fields it expects.
+      if (this.refusedAnnotations(sentAnnotations, error, 400)) {
+        return this.require(consumername, producername, version, path, method, dry_run, api_type, etag, stream, format);
+      }
       // A service older than 2.4.0 refuses the unknown query field with 400.
       if (format && error?.response?.status === 400) {
         const bodyText = await this.decodeBody(error.response);
@@ -599,10 +711,13 @@ export class SanshainClient {
     etag?: string,
     format?: RequireFormat
   ): Promise<RequireResult> {
-    const dataWithFallback = {
-      ...payload,
-      api_type: payload.api_type || 'openapi'
-    };
+    const dataWithFallback = this.withAnnotations(
+      {
+        ...payload,
+        api_type: wireApiType(payload.api_type) || 'openapi'
+      },
+      false
+    );
     let data: any = dataWithFallback;
     const headers: Record<string, string> = {
       'Content-Type': 'application/json'
@@ -630,6 +745,9 @@ export class SanshainClient {
       this.collectWarnings(response);
     } catch (error: any) {
       this.collectWarnings(error?.response);
+      if (this.refusedAnnotations(dataWithFallback.annotations, error, 422)) {
+        return this.requireBundle(payload, compression, etag, format);
+      }
       throw await this.translateError(error);
     }
 

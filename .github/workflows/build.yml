@@ -15,19 +15,38 @@ jobs:
         node-version: [ '20', '24' ]
     steps:
       - name: Checkout code
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ matrix.node-version }}
           cache: 'npm'
 
+      # No dependency's install script runs: none is needed to build or test
+      # (the same in the release and Sonar workflows).
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Build
         run: npm run build
 
       - name: Test
         run: npm test
+
+  # The weekly Security workflow's audit, with the same job name, so a pull
+  # request that brings a vulnerable package into what ships (dependencies) is
+  # stopped before the merge. Only the runtime tree: the dev tooling (jest,
+  # ts-jest) carries advisories without a non-breaking fix (deepmerge has no
+  # fixed release at all), which the weekly full audit keeps reporting. npm audit
+  # reads the lockfile only, so nothing is installed.
+  npm-audit:
+    name: Vulnerable npm packages (npm audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+      - name: npm audit
+        run: npm audit --omit=dev

@@ -16,7 +16,7 @@ The easiest way to use `SanshainJS` is to integrate it into your `package.json` 
 ```json
 {
   "devDependencies": {
-    "sanshain": "^2.5.1"
+    "sanshain": "^2.6.0"
   },
   "scripts": {
     "prebuild": "sanshain require",
@@ -75,6 +75,14 @@ SANSHAIN_GA=true npx sanshain provide      # GA (protected-branch pipeline)
 
 The version itself is never a CI concern — it is read from the spec file (`info.version`, or the `// sanshain-version:` comment for proto).
 
+With `autoGa: true` in `sanshain.yaml` the GA switch can go: a build that declares trunk (`SANSHAIN_TRUNK=true` / `--trunk`) or a tag (`SANSHAIN_TAG` / `--tag`) provides GA by itself, and `SANSHAIN_GA=false` keeps one such build a snapshot:
+
+```bash
+SANSHAIN_TRUNK=true npx sanshain provide   # GA through autoGa (trunk pipeline)
+```
+
+The CI token's user needs the `releaser` role, and a trunk build that changes the spec without a version bump fails with `409 immutable_ga` and the proposed version.
+
 ### Require (Download Specs)
 
 Typically run before build or code generation:
@@ -97,13 +105,24 @@ A file Sanshain cannot read as this project's Component (usually a `metadata.nam
 
 Every warning Sanshain sends (the `Sanshain-Warning` header, e.g. for an unknown `SANSHAIN_TAG`) is printed in the build log; with `SANSHAIN_STRICT=true` it fails the step.
 
+### Annotations from CI
+
+The `{{NAME}}` placeholders of the `annotations` in `sanshain.yaml` are filled from `SANSHAIN_SET_NAME` variables (or `--set NAME=value`); annotations need Sanshain Service 2.13.0 or later:
+
+```bash
+SANSHAIN_SET_AREA=7 SANSHAIN_SET_ID=$REQUIREMENTS_ID npx sanshain provide
+# or
+npx sanshain --set AREA=7 --set ID=$REQUIREMENTS_ID provide
+```
+
 ## 4. Environment Variables
 
-| Variable         | Description                                                                                 |
-|------------------|---------------------------------------------------------------------------------------------|
-| `SANSHAIN_TOKEN` | **Required**. Your authentication token for the Sanshain Service.                           |
-| `SANSHAIN_GA`    | Optional. Set to `true` to provide as immutable GA instead of the default snapshot.         |
-| `SANSHAIN_URL`   | Optional. Overrides the `sanshainUrl` in `sanshain.yaml` (the `--url` flag overrides both). |
+| Variable              | Description                                                                                                           |
+|-----------------------|-----------------------------------------------------------------------------------------------------------------------|
+| `SANSHAIN_TOKEN`      | **Required**. Your authentication token for the Sanshain Service.                                                     |
+| `SANSHAIN_GA`         | Optional. `true` provides as immutable GA instead of the default snapshot; `false` keeps a snapshot despite `autoGa`. |
+| `SANSHAIN_URL`        | Optional. Overrides the `sanshainUrl` in `sanshain.yaml` (the `--url` flag overrides both).                           |
+| `SANSHAIN_SET_<NAME>` | Optional. Fills the `{{NAME}}` placeholders of `annotations` in `sanshain.yaml` (`--set NAME=value` wins).            |
 
 Boolean switches (`SANSHAIN_GA`, `SANSHAIN_TRUNK`, `SANSHAIN_BEST_EFFORT`, `SANSHAIN_STRICT`, `SANSHAIN_FORCE`, `SANSHAIN_COMPRESSION`) are on for `true` or `1` (trimmed, any case); any other value is off.
 
@@ -113,6 +132,7 @@ Stability is an explicit switch — there is no git or branch detection. The rec
 
 - **Feature-branch / PR pipelines**: run `sanshain provide` as-is; publishes overwritable snapshots.
 - **Protected-branch (release) pipelines**: set `SANSHAIN_GA=true`; publishes immutable GA versions.
+- **Or**: set `autoGa: true` in `sanshain.yaml`; every build that declares trunk or a tag publishes GA, every other build a snapshot. There is no branch detection: only the protected pipelines declare trunk or a tag.
 
 If a GA provide is rejected with `409`, the server proposes the next free version; update the spec file's version and re-run.
 

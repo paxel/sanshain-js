@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { load, CORE_SCHEMA, mergeTag } from 'js-yaml';
-import { Stability, Stream, Origin } from './api';
+import { Annotation, Stability, Stream, Origin } from './api';
 
 export interface EndpointConfig {
   method: string;
@@ -43,6 +43,13 @@ export interface SanshainConfig {
   bestEffort?: boolean;
   force?: boolean;
   strict?: boolean;
+  /**
+   * A provide is GA whenever the build declares a stream (trunk or a tag),
+   * unless the --ga flag or SANSHAIN_GA says otherwise.
+   */
+  autoGa?: boolean;
+  /** Annotations as written, `{{NAME}}` placeholders unfilled (see fillAnnotations). */
+  annotations?: Annotation[];
   /** Path to the Backstage catalog-info.yaml the catalog command pushes. */
   catalogInfo?: string;
   provide?: ProvideConfig;
@@ -60,16 +67,24 @@ export function envFlag(name: string): boolean {
 }
 
 /**
- * Decide the stability of a Provide. Always 'snapshot' unless explicitly
- * switched to 'ga' via the --ga CLI flag or the SANSHAIN_GA=true environment
- * variable (typically set by CI on protected-branch pipelines). There is no
- * git or branch magic, and no stability field in sanshain.yaml.
+ * Decide the stability of a Provide. The first of these that is set decides:
+ *  1. the --ga flag (it can only say true; false or absent is unset);
+ *  2. SANSHAIN_GA when not blank, read like every switch, so an explicit
+ *     `false` counts;
+ *  3. `autoGa: true` in sanshain.yaml on a build that declares a stream
+ *     (trunk, a tag, or both — see streamDeclared);
+ *  4. otherwise 'snapshot'.
+ * There is no git or branch detection: CI declares trunk and tag on its
+ * protected pipelines, so only those builds become GA through autoGa.
  */
-export function resolveStability(gaFlag?: boolean): Stability {
-  if (gaFlag || envFlag('SANSHAIN_GA')) {
+export function resolveStability(gaFlag?: boolean, autoGa: boolean = false, streamIsDeclared: boolean = false): Stability {
+  if (gaFlag) {
     return 'ga';
   }
-  return 'snapshot';
+  if ((process.env.SANSHAIN_GA ?? '').trim() !== '') {
+    return envFlag('SANSHAIN_GA') ? 'ga' : 'snapshot';
+  }
+  return autoGa && streamIsDeclared ? 'ga' : 'snapshot';
 }
 
 /** The first value that is not blank, trimmed; undefined when there is none. */
@@ -132,6 +147,57 @@ export function resolveOrigin(
   return origin;
 }
 
+/** The environment variables that fill annotation placeholders: SANSHAIN_SET_ID fills {{ID}} when no --set ID=… does. */
+export const SET_ENV_PREFIX = 'SANSHAIN_SET_';
+
+// {{NAME}} with NAME of ASCII letters, digits and _ only; anything else
+// between double braces ({{ A }}, {{a-b}}, {{}}) is literal text.
+const PLACEHOLDER = /\{\{([A-Za-z0-9_]+)\}\}/g;
+
+/** One `--set NAME=value`, split at the first `=` so the value may hold more. */
+export function parseSet(arg: string): [string, string] {
+  const at = arg.indexOf('=');
+  if (at <= 0) {
+    throw new Error(`expected NAME=value, got '${arg}'`);
+  }
+  return [arg.slice(0, at), arg.slice(at + 1)];
+}
+
+/**
+ * Fill the `{{NAME}}` placeholders of the annotations in sanshain.yaml: the
+ * --set value for NAME first, else the environment variable SANSHAIN_SET_NAME
+ * (exact case). A placeholder counts as filled only with a non-empty value; an
+ * empty --set does not fall through to the environment. An entry with an
+ * unfilled placeholder is left out, with a warning naming it and its first
+ * unfilled placeholder; the others are kept, in order.
+ */
+export function fillAnnotations(
+  declared: Annotation[] | undefined,
+  sets: ReadonlyMap<string, string> = new Map(),
+  env: NodeJS.ProcessEnv = process.env
+): { annotations: Annotation[]; warnings: string[] } {
+  const annotations: Annotation[] = [];
+  const warnings: string[] = [];
+  for (const entry of declared ?? []) {
+    let missing: string | undefined;
+    const value = entry.value.replace(PLACEHOLDER, (_match, name: string) => {
+      const flag = sets.get(name);
+      const found = flag !== undefined ? flag : (env[SET_ENV_PREFIX + name] ?? '');
+      if (found === '' && missing === undefined) missing = name;
+      return found;
+    });
+    if (missing !== undefined) {
+      warnings.push(
+        `annotation '${entry.name}' left out: {{${missing}}} is not set (--set ${missing}=… or ${SET_ENV_PREFIX}${missing})`
+      );
+      continue;
+    }
+    // Exactly the three fields: an extra key in sanshain.yaml is only reported as unknown.
+    annotations.push({ scope: entry.scope, name: entry.name, value });
+  }
+  return { annotations, warnings };
+}
+
 /** What a build declaring both trunk and a tag is told; it sends neither. */
 export const TRUNK_AND_TAG_WARNING = 'trunk and tag are mutually exclusive - this build is recorded in neither';
 
@@ -142,12 +208,28 @@ export const TRUNK_AND_TAG_WARNING = 'trunk and tag are mutually exclusive - thi
  * recorded in neither and the warning says so (strict mode makes it fatal).
  */
 export function resolveStreamWithWarning(trunkFlag?: boolean, tagFlag?: string): { stream: Stream; warning?: string } {
-  const trunk = Boolean(trunkFlag) || envFlag('SANSHAIN_TRUNK');
-  const tag = (tagFlag || process.env.SANSHAIN_TAG || '').trim() || undefined;
+  const { trunk, tag } = declaredStream(trunkFlag, tagFlag);
   if (trunk && tag) {
     return { stream: {}, warning: TRUNK_AND_TAG_WARNING };
   }
   return { stream: trunk ? { trunk: true } : tag ? { tag } : {} };
+}
+
+/** Trunk and the tag as this build declares them, the flags before SANSHAIN_TRUNK / SANSHAIN_TAG. */
+function declaredStream(trunkFlag?: boolean, tagFlag?: string): { trunk: boolean; tag?: string } {
+  const trunk = Boolean(trunkFlag) || envFlag('SANSHAIN_TRUNK');
+  const tag = (tagFlag || process.env.SANSHAIN_TAG || '').trim() || undefined;
+  return { trunk, tag };
+}
+
+/**
+ * Whether the build declares a stream: trunk, a tag, or both — which sends
+ * neither (with the warning) but still declared one. This is what makes a
+ * provide GA under `autoGa: true`.
+ */
+export function streamDeclared(trunkFlag?: boolean, tagFlag?: string): boolean {
+  const { trunk, tag } = declaredStream(trunkFlag, tagFlag);
+  return trunk || tag !== undefined;
 }
 
 /** The stream alone, as resolveStreamWithWarning resolves it: both trunk and a tag give neither. */
@@ -164,7 +246,15 @@ export function configBaseDir(configPath: string = 'sanshain.yaml'): string {
   return path.dirname(path.resolve(process.cwd(), configPath));
 }
 
-export function loadConfig(configPath: string = 'sanshain.yaml'): SanshainConfig {
+/**
+ * Load and validate sanshain.yaml. `bestEffort` is best effort from outside
+ * the file (--best-effort or SANSHAIN_BEST_EFFORT): under it a file that does
+ * not validate is broken and its own `strict: true` does not count, so its
+ * unknown fields are only reported and the validation error is thrown.
+ * SANSHAIN_STRICT still counts. Unknown fields rejected by strict in a file
+ * that otherwise validates throw UnknownFieldsError, which nothing softens.
+ */
+export function loadConfig(configPath: string = 'sanshain.yaml', bestEffort: boolean = false): SanshainConfig {
   const fullPath = path.resolve(process.cwd(), configPath);
   if (!fs.existsSync(fullPath)) {
     throw new Error(`Configuration file not found: ${fullPath}`);
@@ -174,14 +264,26 @@ export function loadConfig(configPath: string = 'sanshain.yaml'): SanshainConfig
   // js-yaml 5 reads YAML 1.2 without merge keys; `<<` is added back so a
   // sanshain.yaml that shares settings through anchors keeps working.
   const config = load(fileContents, { schema: CORE_SCHEMA.withTags(mergeTag) }) as SanshainConfig;
+  if (!isObject(config)) {
+    throw new Error(`${fullPath} must be a mapping of settings, such as sanshainUrl: <url>`);
+  }
 
   applyEnvOverrides(config);
   // Order matters: removed fields fail by name first, then unknown fields get
   // the cat (so it shows even when a later validation error follows, e.g. a
-  // misspelt required field), and only then the remaining validation.
+  // misspelt required field), and only then the validation error is thrown.
   rejectLegacyFields(config);
-  reportUnknownFields(config);
-  validateConfig(config);
+  let invalid: unknown;
+  try {
+    validateConfig(config);
+  } catch (error) {
+    invalid = error;
+  }
+  const broken = invalid !== undefined;
+  // Without SANSHAIN_STRICT, strict can only have come from the broken file.
+  const strict = Boolean(config.strict) && !(bestEffort && broken && !envFlag('SANSHAIN_STRICT'));
+  reportUnknownFields(config, strict);
+  if (broken) throw invalid;
 
   return config;
 }
@@ -198,11 +300,12 @@ export class UnknownFieldsError extends Error {
 // this one does not is still known: one sanshain.yaml serves every client.
 const KNOWN_TOP = new Set([
   'sanshainUrl', 'serviceName', 'clientName', 'compression', 'bestEffort', 'strict', 'force',
-  'insecure', 'combine', 'catalogInfo', 'provide', 'provides', 'requires'
+  'insecure', 'combine', 'catalogInfo', 'autoGa', 'annotations', 'provide', 'provides', 'requires'
 ]);
 const KNOWN_PROVIDE = new Set(['file', 'apiType', 'retired', 'openApiFile', 'asyncApiFile', 'protoFile', 'combine']);
 const KNOWN_REQUIRE = new Set(['serviceName', 'apiType', 'version', 'outputDirectory', 'endpoints', 'format']);
 const KNOWN_ENDPOINT = new Set(['method', 'path']);
+const KNOWN_ANNOTATION = new Set(['scope', 'name', 'value']);
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -225,6 +328,8 @@ export function findUnknownFields(config: unknown): string[] {
   scan(config, KNOWN_TOP, '', (key, value, at) => {
     if (key === 'provide') {
       scan(value, KNOWN_PROVIDE, at);
+    } else if (key === 'annotations' && Array.isArray(value)) {
+      value.forEach((entry, i) => scan(entry, KNOWN_ANNOTATION, `${at}[${i}]`));
     } else if ((key === 'provides' || key === 'requires') && Array.isArray(value)) {
       value.forEach((entry, i) => {
         const entryAt = `${at}[${i}]`;
@@ -255,10 +360,9 @@ export function puzzledCat(line: string): string {
   return ['   /\\_/\\  ?', `  ( O_o )   ${line}`, ' ---U-U---'].join('\n');
 }
 
-function reportUnknownFields(config: SanshainConfig): void {
+function reportUnknownFields(config: SanshainConfig, strict: boolean): void {
   const fields = findUnknownFields(config);
   if (fields.length === 0) return;
-  const strict = Boolean(config.strict);
   const line = unknownFieldsLine(fields, strict);
   console.error(puzzledCat(line));
   if (strict) {
@@ -303,7 +407,7 @@ const TIMEOUT_HINT =
 const BASE_VERSION_HINT =
   "'baseVersion' is no longer supported — Sanshain 2.0 removed optimistic concurrency; the version is read from the spec file (info.version); remove it";
 const RELEASE_BRANCHES_HINT =
-  "'releaseBranches' is no longer supported — stability is 'snapshot' by default; pass --ga or set SANSHAIN_GA=true for GA builds";
+  "'releaseBranches' is no longer supported — stability is 'snapshot' by default; pass --ga or set SANSHAIN_GA=true for GA builds, or set autoGa: true to make trunk and tag builds GA";
 
 /** Branch-era fields are hard errors, by name, before any other check. */
 function rejectLegacyFields(config: any): void {
@@ -350,6 +454,13 @@ function rejectLegacyFields(config: any): void {
   }
 }
 
+/** The apiType spellings provides and requires take; grpc means proto. */
+const API_TYPES: unknown[] = ['openapi', 'asyncapi', 'proto', 'grpc'];
+
+function unsupportedApiType(apiType: unknown): string {
+  return `unsupported apiType '${apiType}' — use openapi, asyncapi or proto (grpc means proto)`;
+}
+
 function validateConfig(config: any): void {
   if (!config.sanshainUrl) {
     throw new Error('Missing required field: sanshainUrl');
@@ -360,6 +471,9 @@ function validateConfig(config: any): void {
 
   const validateProvide = (p: any, index?: number) => {
     const context = index !== undefined ? `provides[${index}]` : 'provide';
+    if (p.apiType !== undefined && !API_TYPES.includes(p.apiType)) {
+      throw new Error(`${context}: ${unsupportedApiType(p.apiType)}`);
+    }
     // A retired entry names its family via apiType alone: the project no
     // longer provides it, so demanding a spec file would force a dead file to
     // stay on disk forever.
@@ -381,6 +495,8 @@ function validateConfig(config: any): void {
     config.provides.forEach((p: any, index: number) => validateProvide(p, index));
   }
 
+  validateAnnotations(config.annotations);
+
   if (config.requires) {
     if (!Array.isArray(config.requires)) {
       throw new Error('Field requires must be an array');
@@ -390,6 +506,9 @@ function validateConfig(config: any): void {
         throw new Error(`Missing serviceName in requires[${index}]`);
       }
       const context = `requires[${index}] (${req.serviceName})`;
+      if (req.apiType !== undefined && !API_TYPES.includes(req.apiType)) {
+        throw new Error(`${context}: ${unsupportedApiType(req.apiType)}`);
+      }
       if (req.format !== undefined && (req.format !== 'openapi' || req.apiType !== 'asyncapi')) {
         throw new Error(
           `${context}: format '${req.format}' with apiType '${req.apiType ?? 'openapi'}' is not supported — ` +
@@ -423,4 +542,34 @@ function validateConfig(config: any): void {
       });
     });
   }
+}
+
+/**
+ * Every annotations entry has the strings scope (version or system), name and
+ * value; a violation names its entry. Wrong types are errors, never converted.
+ * The size limits are the service's to check, and an extra key is an unknown
+ * field, not an error.
+ */
+function validateAnnotations(annotations: unknown): void {
+  if (annotations === undefined || annotations === null) return;
+  if (!Array.isArray(annotations)) {
+    throw new Error('Field annotations must be an array of entries with scope, name and value');
+  }
+  annotations.forEach((entry: unknown, index: number) => {
+    if (!isObject(entry)) {
+      throw new Error(`annotations[${index}]: must be an entry with scope, name and value`);
+    }
+    const context = typeof entry.name === 'string' ? `annotations[${index}] (${entry.name})` : `annotations[${index}]`;
+    for (const field of KNOWN_ANNOTATION) {
+      if (entry[field] === undefined || entry[field] === null) {
+        throw new Error(`${context}: missing '${field}'`);
+      }
+      if (typeof entry[field] !== 'string') {
+        throw new Error(`${context}: '${field}' must be a string`);
+      }
+    }
+    if (entry.scope !== 'version' && entry.scope !== 'system') {
+      throw new Error(`${context}: scope '${entry.scope}' is not supported — use version or system`);
+    }
+  });
 }
