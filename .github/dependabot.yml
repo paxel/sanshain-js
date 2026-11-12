@@ -12,6 +12,13 @@ updates:
     groups:
       npm:
         patterns: ["*"]
+    ignore:
+      # TypeScript 7 waits until ts-jest accepts it (its peer range ends below 7).
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
+      # The types describe the oldest Node the client supports (engines): 22.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:

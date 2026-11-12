@@ -13,10 +13,11 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    # 20 is the floor the README badge promises (commander 14 needs it); 24 is current.
+    # 22 is the floor in package.json's engines (commander 15 needs 22.12); 24 and
+    # 26 are the newer LTS lines.
     strategy:
       matrix:
-        node-version: [ '20', '24' ]
+        node-version: [ '22', '24', '26' ]
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

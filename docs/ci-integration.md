@@ -4,7 +4,7 @@
 
 ## 1. Prerequisites
 
-- **Node.js**: Ensure Node.js (v18+) is installed on your CI runner.
+- **Node.js**: Ensure Node.js 22.12 or newer is installed on your CI runner.
 - **Authentication**: Set the `SANSHAIN_TOKEN` environment variable in your CI platform's secret management.
 
 ## 2. Automatic Integration (Recommended)
