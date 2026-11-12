@@ -55,4 +55,4 @@ runs:
       # No install scripts run while npx fetches it and its dependencies.
       run: |
         set -f
-        npx --yes --ignore-scripts sanshain@2.5.1 $SANSHAIN_ACTION_COMMAND
+        npx --yes --ignore-scripts sanshain@2.6.0 $SANSHAIN_ACTION_COMMAND
