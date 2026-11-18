@@ -1,0 +1,101 @@
+# osv-scanner's exceptions, read by the OSV gate (paxel/gates vulns.yml). Each one says why
+# the repository is not exposed and why no update removes it, and carries a date; when the
+# date passes, the gate fails again: that is the review.
+#
+# An advisory:
+# [[IgnoredVulns]]
+# id = "GHSA-xxxx-xxxx-xxxx"
+# ignoreUntil = 2027-05-14
+# reason = "..."
+#
+# A licence outside the standard's allowlist (one package):
+# [[PackageOverrides]]
+# name = "some-package"
+# ecosystem = "npm"
+# license.ignore = true
+# effectiveUntil = 2027-05-14
+# reason = "..."
+#
+# CI and the release list a notice that a package is unmaintained without failing; the weekly
+# Security run fails on it.
+
+# The one exception among what a user installs.
+[[PackageOverrides]]
+name = "argparse"
+ecosystem = "npm"
+license.ignore = true
+effectiveUntil = 2027-02-18
+reason = """argparse is a port of Python's module of that name and carries Python's licence \
+(PSF-2.0, written Python-2.0 in its older release): permissive, it asks for the licence text \
+and the copyright notice to stay with the code. js-yaml, which reads sanshain.yaml, lists it \
+as a dependency for its own command-line tool, so npm installs it beside the client, which \
+never loads it; the older release comes with the test tooling. The releases of js-yaml the \
+client works with all list it, in releases under this licence."""
+
+# What follows comes with the tools that test and lint the client (jest, ts-jest, eslint). None
+# of it is in the published package or among its dependencies.
+[[PackageOverrides]]
+name = "caniuse-lite"
+ecosystem = "npm"
+license.ignore = true
+effectiveUntil = 2027-02-18
+reason = """caniuse-lite is the browser support data of caniuse.com under CC-BY-4.0, a \
+licence for data that asks for attribution. It comes through Babel, which ts-jest uses to \
+measure coverage, and is installed for the tests only. No release carries another licence."""
+
+[[PackageOverrides]]
+name = "glob"
+ecosystem = "npm"
+license.ignore = true
+effectiveUntil = 2027-02-18
+reason = """glob is under the Blue Oak Model License 1.0.0, a permissive licence that asks \
+only for the licence text or a link to it to travel with copies. It comes through jest and \
+is installed for the tests only. Every release without the advisory GHSA-3g3m-2fjr-6pw4, \
+14.0.2 and later, carries this licence."""
+
+[[PackageOverrides]]
+name = "minimatch"
+ecosystem = "npm"
+license.ignore = true
+effectiveUntil = 2027-02-18
+reason = """minimatch is under the Blue Oak Model License 1.0.0, a permissive licence that \
+asks only for the licence text or a link to it to travel with copies. It comes through \
+eslint, typescript-eslint and jest and is installed for the tests and the linter only. \
+Every release without the advisory GHSA-g3hv-75wg-m249, 11.0.1 and later, carries this \
+licence."""
+
+[[PackageOverrides]]
+name = "@isaacs/nonrecursive-glob-match"
+ecosystem = "npm"
+license.ignore = true
+effectiveUntil = 2027-02-18
+reason = """A dependency of minimatch 11, by the same author and under the same Blue Oak \
+Model License 1.0.0, permissive. Installed for the tests and the linter only; the release \
+minimatch asks for carries this licence."""
+
+[[PackageOverrides]]
+name = "minipass"
+ecosystem = "npm"
+license.ignore = true
+effectiveUntil = 2027-02-18
+reason = """A dependency of glob 14, by the same author and under the same Blue Oak Model \
+License 1.0.0, permissive. Installed for the tests only; the release glob asks for carries \
+this licence."""
+
+[[PackageOverrides]]
+name = "path-scurry"
+ecosystem = "npm"
+license.ignore = true
+effectiveUntil = 2027-02-18
+reason = """A dependency of glob 14, by the same author and under the same Blue Oak Model \
+License 1.0.0, permissive. Installed for the tests only; the release glob asks for carries \
+this licence."""
+
+[[PackageOverrides]]
+name = "lru-cache"
+ecosystem = "npm"
+license.ignore = true
+effectiveUntil = 2027-02-18
+reason = """A dependency of path-scurry, by the same author and under the same Blue Oak \
+Model License 1.0.0, permissive. Installed for the tests only; the release path-scurry asks \
+for carries this licence. Babel uses an older release under ISC beside it."""
