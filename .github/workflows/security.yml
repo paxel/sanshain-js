@@ -1,30 +1,24 @@
-# Fails only when a runtime dependency has a known vulnerability (npm advisories). Runs
-# weekly and on demand, because new advisories appear without any change in this repo.
-# CI runs the same gate (build.yml, same job name) on every push and pull request.
-# The full audit, dev tooling included, is printed as a report that fails nothing: some
-# advisories in jest's tree have no fixed release, and they never ship to users.
 name: Security
 
+# Weekly, and by hand: the release gate without a version, strict. It fails on every open
+# code-scanning or secret-scanning alert that code-scanning-ignores.toml does not accept, on a
+# known vulnerability, on an unmaintained dependency and on a licence outside the allowlist,
+# and when an accepted finding's date has passed: that is the review.
 on:
   schedule:
-    - cron: "17 5 * * 1"
+    - cron: "23 5 * * 1"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  npm-audit:
-    name: Vulnerable npm packages (npm audit)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: '24'
-      - name: npm audit (runtime dependencies)
-        run: npm audit --omit=dev
-      - name: npm audit (dev tooling, report only)
-        if: always()
-        continue-on-error: true
-        run: npm audit
+  gate:
+    uses: paxel/gates/.github/workflows/release-gate.yml@e5e253a7caff277f039fb31a3e6be1479682dcc4 # v1.2.0
+    permissions:
+      contents: read
+      security-events: read
+    with:
+      strict: true
+    secrets:
+      alerts-token: ${{ secrets.GATES_ALERTS_TOKEN }}
