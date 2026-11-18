@@ -17,9 +17,6 @@ const { loadConfig, UnknownFieldsError } = require('../dist/config');
 
 const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'sanshain-fuzz-config-')), 'sanshain.yaml');
 
-// The puzzled cat goes to stderr for every unknown field; the fuzzer's own report goes there too.
-console.error = () => undefined;
-
 /**
  * Whether loadConfig documents this failure: a plain Error names what is wrong with the file,
  * UnknownFieldsError is strict mode refusing unknown fields, YAMLException is js-yaml refusing
@@ -42,6 +39,10 @@ function documented(error) {
  */
 function load(content, bestEffort) {
   fs.writeFileSync(file, content);
+  // The puzzled cat goes to stderr for every unknown field. It is silent while the file is
+  // read, and only then: the fuzzer reports a finding there too.
+  const report = console.error;
+  console.error = () => undefined;
   /** @type {unknown} */
   let config;
   try {
@@ -49,6 +50,8 @@ function load(content, bestEffort) {
   } catch (error) {
     if (documented(error)) return;
     throw error;
+  } finally {
+    console.error = report;
   }
   if (typeof config !== 'object' || config === null) {
     throw new Error(`expected a configuration or an error, got ${typeof config}`);
