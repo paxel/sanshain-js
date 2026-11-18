@@ -166,5 +166,6 @@ jobs:
           if npm view "sanshain@${VERSION}" version >/dev/null 2>&1; then
             echo "sanshain@${VERSION} already on npm, skipping"
           else
-            npm publish "release/sanshain-${VERSION}.tgz" --provenance
+            # With ./ in front: npm reads a bare "release/<name>" as a GitHub repository.
+            npm publish "./release/sanshain-${VERSION}.tgz" --provenance
           fi
