@@ -104,7 +104,8 @@ The decisions behind these are in `docs/adr/0001-move-to-gates.md`.
 
 - A finding of the linter is fixed in the code. One that must stay is silenced at its line
   with `// eslint-disable-next-line <rule> -- <reason>`, never in `eslint.config.mjs` and
-  never without the reason. An exported type does not change to satisfy a rule.
+  never without the reason; a fuzz target silences `no-require-imports` once, around its
+  `require` lines. An exported type does not change to satisfy a rule.
 - No dependency's install script runs: every install is `npm ci --ignore-scripts`.
 - Every action in `.github/workflows/` is pinned to a full commit SHA with its version in
   a trailing comment. Never reference an action by tag or branch alone.
