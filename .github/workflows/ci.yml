@@ -1,0 +1,56 @@
+name: CI
+
+# sanshain-js's gates. The standard's part comes from paxel/gates: the OSV gate, the TypeScript
+# gate (prettier, eslint, tsc, tests, coverage ratchet) and SonarQube Cloud. The job on the
+# other supported Node lines is the repository's own (docs/adr/0001-move-to-gates.md).
+# A branch gets its run through its pull request; a run per push as well would be the same
+# jobs twice, and SonarQube Cloud analyses only the default branch and pull requests.
+on:
+  push:
+    branches: [summer]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Known vulnerabilities and licences of every dependency: osv-scanner decided by gates'
+  # osv_gate.py. What is accepted stands in osv-scanner.toml.
+  vulns:
+    uses: paxel/gates/.github/workflows/vulns.yml@e5e253a7caff277f039fb31a3e6be1479682dcc4 # v1.2.0
+
+  # On the Node line .nvmrc pins, the newest LTS.
+  ts:
+    uses: paxel/gates/.github/workflows/ts.yml@e5e253a7caff277f039fb31a3e6be1479682dcc4 # v1.2.0
+
+  # `engines` in package.json promises Node 22.12 and later, so the package is built and
+  # tested on that floor and on the LTS line between it and the pinned one, not just declared.
+  # Keep in sync with `engines` and .nvmrc.
+  node:
+    name: Node ${{ matrix.node }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["22.12.0", "24"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ matrix.node }}
+      # No dependency's install script runs: none is needed to build or test.
+      - run: npm ci --ignore-scripts
+      - run: npm run build
+      - run: npm test
+
+  sonar:
+    needs: ts
+    uses: paxel/gates/.github/workflows/sonar.yml@e5e253a7caff277f039fb31a3e6be1479682dcc4 # v1.2.0
+    secrets:
+      sonar-token: ${{ secrets.SQ_TOKEN }}

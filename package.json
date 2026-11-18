@@ -14,7 +14,8 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "test": "jest"
+    "test": "jest",
+    "test:coverage": "jest --coverage"
   },
   "description": "TypeScript/Node.js client and CLI for Sanshain Service",
   "author": "Axel <axel@sanshain.io>",

@@ -9,6 +9,10 @@ module.exports = {
   testEnvironment: 'node',
   testMatch: ['**/tests/**/*.test.ts'],
   modulePathIgnorePatterns: ['<rootDir>/dist/'],
+  // npm run test:coverage: every source file counts, loaded by a test or not, and the
+  // gate reads coverage/lcov.info.
+  collectCoverageFrom: ['src/**/*.ts'],
+  coverageReporters: ['lcovonly', 'text-summary'],
   transform: {
     ...tsJestTransformCfg,
     // commander 15 ships ES modules only. Node 22.12+ loads them from the built
