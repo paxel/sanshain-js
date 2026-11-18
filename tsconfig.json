@@ -1,16 +1,26 @@
 {
+  // What the gate checks (tsc --noEmit, eslint): the sources, the tests, the command in bin/,
+  // the fuzz targets and the Jest config. The build is tsconfig.build.json.
   "compilerOptions": {
     "target": "ES2020",
+    "lib": ["ES2022"],
     "module": "CommonJS",
-    "outDir": "./dist",
-    "rootDir": "./src",
     "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "exactOptionalPropertyTypes": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "declaration": true,
-    "types": ["node", "jest"]
+    "types": ["node", "jest"],
+    "allowJs": true,
+    "checkJs": true,
+    // bin/ and fuzz/ load the built package from dist/. With both roots laid over each other,
+    // "../dist/cli" is checked against src/cli.ts, so the check needs no build.
+    "rootDirs": ["src", "dist"],
+    "noEmit": true
   },
-  "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "tests"]
+  "include": ["src", "tests", "bin", "fuzz", "jest.config.js"]
 }

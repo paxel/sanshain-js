@@ -1,49 +1,65 @@
 /** End-to-end runs of the CLI against a mocked HTTP layer. */
 import fs from 'fs';
 import os from 'os';
+import crypto from 'crypto';
+import { builtinModules } from 'module';
 import path from 'path';
+import zlib from 'zlib';
+import { MockedHttp, nthCall } from './http';
 
 jest.mock('axios');
 
 class ExitCalled extends Error {}
 
+/** What these tests read of package.json. */
+const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8')) as {
+  version: string;
+  dependencies: Record<string, string>;
+};
+
 interface RunResult {
   exitCode: number | undefined;
   out: string;
   err: string;
-  axios: any;
+  axios: MockedHttp;
+}
+
+/** The CLI on a freshly loaded module, with the mocked axios it was loaded with. */
+function isolated(): { axios: MockedHttp; cli: typeof import('../src/cli') } {
+  const loaded: { axios?: MockedHttp; cli?: typeof import('../src/cli') } = {};
+  jest.isolateModules(() => {
+    loaded.axios = jest.requireMock<MockedHttp>('axios');
+    loaded.cli = jest.requireActual<typeof import('../src/cli')>('../src/cli');
+  });
+  if (!loaded.axios || !loaded.cli) throw new Error('the CLI did not load');
+  return { axios: loaded.axios, cli: loaded.cli };
 }
 
 /**
  * Run the CLI once, on a freshly loaded module so commander's option state
  * never carries over between runs. `mock` arranges the HTTP answers.
  */
-async function runCli(args: string[], mock: (axios: any) => void = () => {}): Promise<RunResult> {
-  let cli: any;
-  let axios: any;
+async function runCli(args: string[], mock: (axios: MockedHttp) => unknown = () => undefined): Promise<RunResult> {
   // The automocked axios is shared between isolated registries: start clean.
   jest.clearAllMocks();
-  jest.isolateModules(() => {
-    axios = require('axios');
-    cli = require('../src/cli');
-  });
+  const { axios, cli } = isolated();
   axios.create.mockReturnValue(axios);
   mock(axios);
 
   let exitCode: number | undefined;
   const out: string[] = [];
   const err: string[] = [];
-  const exitSpy = jest.spyOn(process, 'exit').mockImplementation(((code?: number) => {
-    if (exitCode === undefined) exitCode = code ?? 0;
+  const exitSpy = jest.spyOn(process, 'exit').mockImplementation((code) => {
+    exitCode ??= Number(code ?? 0);
     throw new ExitCalled();
-  }) as any);
-  const logSpy = jest.spyOn(console, 'log').mockImplementation((...a: any[]) => {
+  });
+  const logSpy = jest.spyOn(console, 'log').mockImplementation((...a: unknown[]) => {
     out.push(a.join(' '));
   });
-  const warnSpy = jest.spyOn(console, 'warn').mockImplementation((...a: any[]) => {
+  const warnSpy = jest.spyOn(console, 'warn').mockImplementation((...a: unknown[]) => {
     err.push(a.join(' '));
   });
-  const errorSpy = jest.spyOn(console, 'error').mockImplementation((...a: any[]) => {
+  const errorSpy = jest.spyOn(console, 'error').mockImplementation((...a: unknown[]) => {
     err.push(a.join(' '));
   });
   try {
@@ -63,7 +79,7 @@ const PROVIDE_OK = JSON.stringify({
   version: '1.0.0',
   stability: 'snapshot',
   content_hash: 'sha256:abc',
-  changes: { inserts: 1, updates: 0, deletes: 0 }
+  changes: { inserts: 1, updates: 0, deletes: 0 },
 });
 
 const savedEnv = { ...process.env };
@@ -72,10 +88,7 @@ let workDir: string; // the working directory the CLI runs in
 let projectDir: string; // a different folder holding sanshain.yaml
 
 beforeEach(() => {
-  process.env = { ...savedEnv };
-  for (const key of Object.keys(process.env)) {
-    if (key.startsWith('SANSHAIN_')) delete process.env[key];
-  }
+  process.env = Object.fromEntries(Object.entries(savedEnv).filter(([key]) => !key.startsWith('SANSHAIN_')));
   workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sanshain-cwd-'));
   projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sanshain-project-'));
   process.chdir(workDir);
@@ -101,21 +114,35 @@ function writeProject(yaml: string, files: Record<string, string> = {}): string 
 describe('the origin of a provide', () => {
   it('sends --tickets and --note and omits what is unknown', async () => {
     const saved = { ...process.env };
-    for (const k of ['GITHUB_SERVER_URL', 'GITHUB_REPOSITORY', 'GITHUB_RUN_ID', 'GITHUB_REF', 'CI_JOB_URL',
-      'CI_MERGE_REQUEST_PROJECT_URL', 'CI_MERGE_REQUEST_IID', 'BUILD_URL', 'CHANGE_URL',
-      'SANSHAIN_BUILD_URL', 'SANSHAIN_CHANGE_URL', 'SANSHAIN_TICKETS', 'SANSHAIN_NOTE']) {
-      delete process.env[k];
-    }
+    const runner = new Set([
+      'GITHUB_SERVER_URL',
+      'GITHUB_REPOSITORY',
+      'GITHUB_RUN_ID',
+      'GITHUB_REF',
+      'CI_JOB_URL',
+      'CI_MERGE_REQUEST_PROJECT_URL',
+      'CI_MERGE_REQUEST_IID',
+      'BUILD_URL',
+      'CHANGE_URL',
+      'SANSHAIN_BUILD_URL',
+      'SANSHAIN_CHANGE_URL',
+      'SANSHAIN_TICKETS',
+      'SANSHAIN_NOTE',
+    ]);
+    process.env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !runner.has(k)));
     try {
       const config = writeProject(
         'sanshainUrl: http://localhost:3000\nserviceName: svc\nprovide:\n  file: openapi.yaml\n',
-        { 'openapi.yaml': 'openapi: 3.0.3\ninfo:\n  version: 1.0.0\n' }
+        { 'openapi.yaml': 'openapi: 3.0.3\ninfo:\n  version: 1.0.0\n' },
       );
-      const run = await runCli(['-c', config, '--tickets', 'ORD-7,ORD-9', '--note', 'Adds users', 'provide'], (axios) => {
-        axios.post.mockResolvedValue({ status: 202, data: PROVIDE_OK, headers: {} });
-      });
+      const run = await runCli(
+        ['-c', config, '--tickets', 'ORD-7,ORD-9', '--note', 'Adds users', 'provide'],
+        (axios) => {
+          axios.post.mockResolvedValue({ status: 202, data: PROVIDE_OK, headers: {} });
+        },
+      );
       expect(run.exitCode).toBeUndefined();
-      const payload = run.axios.post.mock.calls[0][1];
+      const payload = nthCall(run.axios.post, 0)[1];
       expect(payload.tickets).toEqual(['ORD-7', 'ORD-9']);
       expect(payload.note).toBe('Adds users');
       expect('build_url' in payload).toBe(false);
@@ -133,19 +160,23 @@ describe('an older service refusing the origin', () => {
     try {
       const config = writeProject(
         'sanshainUrl: http://localhost:3000\nserviceName: svc\nprovide:\n  file: openapi.yaml\n',
-        { 'openapi.yaml': 'openapi: 3.0.3\ninfo:\n  version: 1.0.0\n' }
+        { 'openapi.yaml': 'openapi: 3.0.3\ninfo:\n  version: 1.0.0\n' },
       );
       const run = await runCli(['-c', config, 'provide'], (axios) => {
         axios.post
           .mockRejectedValueOnce({
-            response: { status: 422, data: 'Failed to deserialize the JSON body into the target type: unknown field `note`', headers: {} },
+            response: {
+              status: 422,
+              data: 'Failed to deserialize the JSON body into the target type: unknown field `note`',
+              headers: {},
+            },
           })
           .mockResolvedValueOnce({ status: 202, data: PROVIDE_OK, headers: {} });
       });
       expect(run.exitCode).toBeUndefined();
       expect(run.axios.post).toHaveBeenCalledTimes(2);
-      expect(run.axios.post.mock.calls[0][1].note).toBe('Adds users');
-      expect('note' in run.axios.post.mock.calls[1][1]).toBe(false);
+      expect(nthCall(run.axios.post, 0)[1].note).toBe('Adds users');
+      expect('note' in nthCall(run.axios.post, 1)[1]).toBe(false);
       expect(run.err).toContain('does not take the build');
     } finally {
       process.env = saved;
@@ -157,7 +188,7 @@ describe('autoGa', () => {
   const SPEC = { 'openapi.yaml': 'openapi: 3.0.3\ninfo:\n  version: 1.0.0\n' };
   const yaml = (autoGa?: boolean) =>
     'sanshainUrl: http://localhost:3000\nserviceName: svc\n' +
-    (autoGa === undefined ? '' : `autoGa: ${autoGa}\n`) +
+    (autoGa === undefined ? '' : `autoGa: ${String(autoGa)}\n`) +
     'provide:\n  file: openapi.yaml\n';
 
   // autoGa | stream | --ga | SANSHAIN_GA | stability. The --ga flag can only
@@ -169,7 +200,7 @@ describe('autoGa', () => {
     ['true', 'trunk', [], 'false', 'snapshot', true],
     ['false', 'trunk', [], '-', 'snapshot', false],
     ['absent', 'none', [], 'true', 'ga', undefined],
-    ['true', 'none', ['--ga'], 'false', 'ga', true]
+    ['true', 'none', ['--ga'], 'false', 'ga', true],
   ] as [string, string, string[], string, string, boolean | undefined][])(
     'autoGa %s, stream %s, flags %j, SANSHAIN_GA %s: %s',
     async (_label, stream, flags, gaEnv, expected, autoGa) => {
@@ -182,8 +213,8 @@ describe('autoGa', () => {
       });
 
       expect(run.exitCode).toBeUndefined();
-      expect(run.axios.post.mock.calls[0][1].stability).toBe(expected);
-    }
+      expect(nthCall(run.axios.post, 0)[1].stability).toBe(expected);
+    },
   );
 
   it('reads the stream from SANSHAIN_TRUNK and SANSHAIN_TAG too', async () => {
@@ -192,14 +223,14 @@ describe('autoGa', () => {
     const trunkRun = await runCli(['-c', config, 'provide'], (axios) => {
       axios.post.mockResolvedValue({ status: 202, data: PROVIDE_OK, headers: {} });
     });
-    expect(trunkRun.axios.post.mock.calls[0][1]).toMatchObject({ stability: 'ga', trunk: true });
+    expect(nthCall(trunkRun.axios.post, 0)[1]).toMatchObject({ stability: 'ga', trunk: true });
 
     delete process.env.SANSHAIN_TRUNK;
     process.env.SANSHAIN_TAG = 'release-1';
     const tagRun = await runCli(['-c', config, 'provide'], (axios) => {
       axios.post.mockResolvedValue({ status: 202, data: PROVIDE_OK, headers: {} });
     });
-    expect(tagRun.axios.post.mock.calls[0][1]).toMatchObject({ stability: 'ga', tag: 'release-1' });
+    expect(nthCall(tagRun.axios.post, 0)[1]).toMatchObject({ stability: 'ga', tag: 'release-1' });
   });
 
   it('trunk and a tag together still count as a declared stream', async () => {
@@ -210,7 +241,7 @@ describe('autoGa', () => {
     });
 
     expect(run.exitCode).toBeUndefined();
-    const payload = run.axios.post.mock.calls[0][1];
+    const payload = nthCall(run.axios.post, 0)[1];
     expect(payload.stability).toBe('ga');
     expect(payload).not.toHaveProperty('trunk');
     expect(payload).not.toHaveProperty('tag');
@@ -219,21 +250,21 @@ describe('autoGa', () => {
 
   it('a retire on a trunk build with autoGa sends no stability', async () => {
     const config = writeProject(
-      'sanshainUrl: http://localhost:3000\nserviceName: svc\nautoGa: true\nprovides:\n  - apiType: asyncapi\n    retired: true\n'
+      'sanshainUrl: http://localhost:3000\nserviceName: svc\nautoGa: true\nprovides:\n  - apiType: asyncapi\n    retired: true\n',
     );
 
     const run = await runCli(['-c', config, '--trunk', 'provide'], (axios) => {
       axios.post.mockResolvedValue({
         status: 200,
         data: JSON.stringify({ tag_cleared: 'messaging', trunk_pins_closed: 0, contracts_released: 0 }),
-        headers: {}
+        headers: {},
       });
     });
 
     expect(run.exitCode).toBeUndefined();
     expect(run.axios.post).toHaveBeenCalledTimes(1);
-    expect(run.axios.post.mock.calls[0][0]).toBe('/provide/asyncapi');
-    expect(run.axios.post.mock.calls[0][1]).toEqual({ producername: 'svc', retired: true });
+    expect(nthCall(run.axios.post, 0)[0]).toBe('/provide/asyncapi');
+    expect(nthCall(run.axios.post, 0)[1]).toEqual({ producername: 'svc', retired: true });
   });
 
   it('a 403 on a GA provide names autoGa and SANSHAIN_GA=false as the way back to a snapshot', async () => {
@@ -242,7 +273,7 @@ describe('autoGa', () => {
     const run = await runCli(['-c', config, '--trunk', 'provide'], (axios) => {
       axios.get.mockResolvedValue({ status: 200, data: JSON.stringify({ version: '2.13.0' }), headers: {} });
       axios.post.mockRejectedValue({
-        response: { status: 403, data: JSON.stringify({ error: "requires the 'releaser' role" }), headers: {} }
+        response: { status: 403, data: JSON.stringify({ error: "requires the 'releaser' role" }), headers: {} },
       });
     });
 
@@ -265,7 +296,7 @@ describe('annotations', () => {
   const REQUIREMENTS = { scope: 'version', name: 'requirements', value: 'http://solar.system/id-7/requirements/42' };
   const JENKINS = { scope: 'system', name: 'jenkins', value: 'https://jenkins.corp/job/payments' };
   const UNFILLED = "annotation 'requirements' left out: {{ID}} is not set (--set ID=… or SANSHAIN_SET_ID)";
-  const provideOk = (axios: any) => axios.post.mockResolvedValue({ status: 202, data: PROVIDE_OK, headers: {} });
+  const provideOk = (axios: MockedHttp) => axios.post.mockResolvedValue({ status: 202, data: PROVIDE_OK, headers: {} });
 
   it('provide sends every entry, filled from --set and SANSHAIN_SET_*', async () => {
     process.env.SANSHAIN_SET_ID = '42';
@@ -274,16 +305,19 @@ describe('annotations', () => {
     const run = await runCli(['-c', config, '--set', 'AREA=7', 'provide'], provideOk);
 
     expect(run.exitCode).toBeUndefined();
-    expect(run.axios.post.mock.calls[0][1].annotations).toEqual([REQUIREMENTS, JENKINS]);
+    expect(nthCall(run.axios.post, 0)[1].annotations).toEqual([REQUIREMENTS, JENKINS]);
     expect(run.err).not.toContain('left out');
   });
 
   it('a later --set for the same name wins', async () => {
     const config = writeProject(yaml('provide:\n  file: openapi.yaml\n'), SPEC);
 
-    const run = await runCli(['-c', config, '--set', 'AREA=1', '--set', 'ID=42', '--set', 'AREA=7', 'provide'], provideOk);
+    const run = await runCli(
+      ['-c', config, '--set', 'AREA=1', '--set', 'ID=42', '--set', 'AREA=7', 'provide'],
+      provideOk,
+    );
 
-    expect(run.axios.post.mock.calls[0][1].annotations).toEqual([REQUIREMENTS, JENKINS]);
+    expect(nthCall(run.axios.post, 0)[1].annotations).toEqual([REQUIREMENTS, JENKINS]);
   });
 
   it('provide --dry-run sends them as a real provide does', async () => {
@@ -291,7 +325,7 @@ describe('annotations', () => {
 
     const run = await runCli(['-c', config, '--set', 'AREA=7', '--set', 'ID=42', 'provide', '--dry-run'], provideOk);
 
-    expect(run.axios.post.mock.calls[0][1]).toMatchObject({ dry_run: true, annotations: [REQUIREMENTS, JENKINS] });
+    expect(nthCall(run.axios.post, 0)[1]).toMatchObject({ dry_run: true, annotations: [REQUIREMENTS, JENKINS] });
   });
 
   it('an unfilled entry is left out with a warning; the others are sent', async () => {
@@ -301,7 +335,7 @@ describe('annotations', () => {
 
     expect(run.exitCode).toBeUndefined();
     expect(run.err).toContain(`⚠ ${UNFILLED}`);
-    expect(run.axios.post.mock.calls[0][1].annotations).toEqual([JENKINS]);
+    expect(nthCall(run.axios.post, 0)[1].annotations).toEqual([JENKINS]);
   });
 
   it('under strict an unfilled entry fails before any request, also with best-effort', async () => {
@@ -318,9 +352,9 @@ describe('annotations', () => {
     const config = writeProject(
       yaml(
         'strict: true\ncatalogInfo: catalog-info.yaml\nrequires:\n  - serviceName: auth\n    version: 1.0.0\n    outputDirectory: out\n' +
-          '    endpoints:\n      - method: GET\n        path: /x\n'
+          '    endpoints:\n      - method: GET\n        path: /x\n',
       ),
-      { 'catalog-info.yaml': 'kind: Component\n' }
+      { 'catalog-info.yaml': 'kind: Component\n' },
     );
 
     const required = await runCli(['-c', config, 'require']);
@@ -341,12 +375,14 @@ describe('annotations', () => {
     });
 
     expect(run.exitCode).toBeUndefined();
-    expect(run.axios.post.mock.calls[0][1]).toEqual({ producername: 'svc', retired: true });
+    expect(nthCall(run.axios.post, 0)[1]).toEqual({ producername: 'svc', retired: true });
   });
 
   it('require sends only the system ones, as the annotations query parameter', async () => {
     const config = writeProject(
-      yaml('requires:\n  - serviceName: auth\n    version: 1.0.0\n    outputDirectory: out\n    endpoints:\n      - method: GET\n        path: /x\n')
+      yaml(
+        'requires:\n  - serviceName: auth\n    version: 1.0.0\n    outputDirectory: out\n    endpoints:\n      - method: GET\n        path: /x\n',
+      ),
     );
 
     const run = await runCli(['-c', config, '--set', 'AREA=7', '--set', 'ID=42', 'require', '--dry-run'], (axios) => {
@@ -354,17 +390,17 @@ describe('annotations', () => {
     });
 
     expect(run.exitCode).toBeUndefined();
-    const params = run.axios.get.mock.calls[0][1].params;
+    const params = nthCall(run.axios.get, 0)[1].params;
     expect(params.dry_run).toBe(true);
-    expect(JSON.parse(params.annotations)).toEqual([JENKINS]);
+    expect(JSON.parse(String(params.annotations))).toEqual([JENKINS]);
   });
 
   it('a bundle sends only the system ones in the body', async () => {
     const config = writeProject(
       yaml(
         'requires:\n  - serviceName: auth\n    version: 1.0.0\n    outputDirectory: out\n    endpoints:\n' +
-          '      - method: GET\n        path: /x\n      - method: GET\n        path: /y\n'
-      )
+          '      - method: GET\n        path: /x\n      - method: GET\n        path: /y\n',
+      ),
     );
 
     const run = await runCli(['-c', config, 'require'], (axios) => {
@@ -372,25 +408,29 @@ describe('annotations', () => {
     });
 
     expect(run.exitCode).toBeUndefined();
-    expect(run.axios.post.mock.calls[0][0]).toBe('/require-bundle');
-    expect(run.axios.post.mock.calls[0][1].annotations).toEqual([JENKINS]);
+    expect(nthCall(run.axios.post, 0)[0]).toBe('/require-bundle');
+    expect(nthCall(run.axios.post, 0)[1].annotations).toEqual([JENKINS]);
   });
 
   it('catalog sends only the system ones in the body', async () => {
     const config = writeProject(yaml('catalogInfo: catalog-info.yaml\n'), { 'catalog-info.yaml': 'kind: Component\n' });
 
     const run = await runCli(['-c', config, 'catalog'], (axios) => {
-      axios.put.mockResolvedValue({ status: 200, data: JSON.stringify({ system: 'svc', trunk: false, resources: [] }), headers: {} });
+      axios.put.mockResolvedValue({
+        status: 200,
+        data: JSON.stringify({ system: 'svc', trunk: false, resources: [] }),
+        headers: {},
+      });
     });
 
     expect(run.exitCode).toBeUndefined();
-    expect(run.axios.put.mock.calls[0][1]).toEqual({ catalog_info_yaml: 'kind: Component\n', annotations: [JENKINS] });
+    expect(nthCall(run.axios.put, 0)[1]).toEqual({ catalog_info_yaml: 'kind: Component\n', annotations: [JENKINS] });
   });
 
   it('an older service refusing them: the provide is repeated without them and the warning does not fail strict', async () => {
     const config = writeProject(
       yaml('strict: true\nprovides:\n  - file: openapi.yaml\n  - file: asyncapi.yaml\n    apiType: asyncapi\n'),
-      { ...SPEC, 'asyncapi.yaml': 'asyncapi: 3.0.0\ninfo:\n  version: 1.0.0\n' }
+      { ...SPEC, 'asyncapi.yaml': 'asyncapi: 3.0.0\ninfo:\n  version: 1.0.0\n' },
     );
 
     const run = await runCli(['-c', config, '--set', 'AREA=7', '--set', 'ID=42', 'provide'], (axios) => {
@@ -401,18 +441,20 @@ describe('annotations', () => {
             data:
               'Failed to deserialize the JSON body into the target type: unknown field `annotations`, expected one of ' +
               '`producername`, `openapi_yaml`, `stability`, `build_url`, `change_url`, `tickets`, `note`, `dry_run`, `trunk`, `tag`',
-            headers: {}
-          }
+            headers: {},
+          },
         })
         .mockResolvedValue({ status: 202, data: PROVIDE_OK, headers: {} });
     });
 
     expect(run.exitCode).toBeUndefined();
     expect(run.axios.post).toHaveBeenCalledTimes(3);
-    expect(run.axios.post.mock.calls[0][1].annotations).toEqual([REQUIREMENTS, JENKINS]);
-    expect(run.axios.post.mock.calls[1][1]).not.toHaveProperty('annotations');
-    expect(run.axios.post.mock.calls[2][1]).not.toHaveProperty('annotations');
-    expect(run.err.split('Sanshain Service before 2.13.0 does not take annotations; sending without them')).toHaveLength(2);
+    expect(nthCall(run.axios.post, 0)[1].annotations).toEqual([REQUIREMENTS, JENKINS]);
+    expect(nthCall(run.axios.post, 1)[1]).not.toHaveProperty('annotations');
+    expect(nthCall(run.axios.post, 2)[1]).not.toHaveProperty('annotations');
+    expect(
+      run.err.split('Sanshain Service before 2.13.0 does not take annotations; sending without them'),
+    ).toHaveLength(2);
   });
 
   it('--set without = is refused', async () => {
@@ -433,7 +475,7 @@ describe('paths relative to sanshain.yaml', () => {
   it('provide reads the spec file next to the config, not in the working directory', async () => {
     const config = writeProject(
       'sanshainUrl: http://localhost:3000\nserviceName: svc\nprovide:\n  file: api/openapi.yaml\n',
-      { 'api/openapi.yaml': 'openapi: 3.0.3\ninfo:\n  version: 1.0.0\n' }
+      { 'api/openapi.yaml': 'openapi: 3.0.3\ninfo:\n  version: 1.0.0\n' },
     );
 
     const run = await runCli(['-c', config, 'provide'], (axios) => {
@@ -442,11 +484,13 @@ describe('paths relative to sanshain.yaml', () => {
 
     expect(run.exitCode).toBeUndefined();
     expect(run.axios.post).toHaveBeenCalledTimes(1);
-    expect(run.axios.post.mock.calls[0][1].openapi_yaml).toBe('openapi: 3.0.3\ninfo:\n  version: 1.0.0\n');
+    expect(nthCall(run.axios.post, 0)[1].openapi_yaml).toBe('openapi: 3.0.3\ninfo:\n  version: 1.0.0\n');
   });
 
   it('provide names the resolved path when the spec file is missing', async () => {
-    const config = writeProject('sanshainUrl: http://localhost:3000\nserviceName: svc\nprovide:\n  file: missing.yaml\n');
+    const config = writeProject(
+      'sanshainUrl: http://localhost:3000\nserviceName: svc\nprovide:\n  file: missing.yaml\n',
+    );
 
     const run = await runCli(['-c', config, 'provide']);
 
@@ -464,7 +508,7 @@ describe('paths relative to sanshain.yaml', () => {
     });
 
     expect(run.exitCode).toBeUndefined();
-    expect(run.axios.post.mock.calls[0][1].openapi_yaml).toBe('openapi: 3.0.3\n');
+    expect(nthCall(run.axios.post, 0)[1].openapi_yaml).toBe('openapi: 3.0.3\n');
   });
 
   it('require writes into the output directory next to the config', async () => {
@@ -479,8 +523,8 @@ describe('paths relative to sanshain.yaml', () => {
         '    endpoints:',
         '      - method: GET',
         '        path: /users',
-        ''
-      ].join('\n')
+        '',
+      ].join('\n'),
     );
 
     const run = await runCli(['-c', config, 'require'], (axios) => {
@@ -505,7 +549,7 @@ describe('apiType grpc on a require', () => {
       '    outputDirectory: gen',
       '    endpoints:',
       ...endpoints.flatMap((rpc) => ['      - method: RPC', `        path: ${rpc}`]),
-      ''
+      '',
     ].join('\n');
   const PROTO = 'syntax = "proto3";\n';
 
@@ -517,7 +561,7 @@ describe('apiType grpc on a require', () => {
     });
 
     expect(run.exitCode).toBeUndefined();
-    expect(run.axios.get.mock.calls[0][0]).toBe('/require/grpc');
+    expect(nthCall(run.axios.get, 0)[0]).toBe('/require/grpc');
     expect(fs.readFileSync(path.join(projectDir, 'gen/payments.proto'), 'utf8')).toBe(PROTO);
     expect(fs.existsSync(path.join(projectDir, 'gen/payments.yaml'))).toBe(false);
   });
@@ -530,8 +574,8 @@ describe('apiType grpc on a require', () => {
     });
 
     expect(run.exitCode).toBeUndefined();
-    expect(run.axios.post.mock.calls[0][0]).toBe('/require-bundle');
-    expect(run.axios.post.mock.calls[0][1].api_type).toBe('proto');
+    expect(nthCall(run.axios.post, 0)[0]).toBe('/require-bundle');
+    expect(nthCall(run.axios.post, 0)[1].api_type).toBe('proto');
     expect(fs.readFileSync(path.join(projectDir, 'gen/payments_bundle.proto'), 'utf8')).toBe(PROTO);
   });
 });
@@ -539,18 +583,21 @@ describe('apiType grpc on a require', () => {
 describe('best effort softens failed calls only', () => {
   const OPENAPI = 'openapi: 3.0.3\ninfo:\n  version: 1.0.0\n';
   const ASYNCAPI = 'asyncapi: 2.6.0\ninfo:\n  version: 1.0.0\n';
-  const boom = { response: { status: 500, data: Buffer.from('{"error":"boom"}'), headers: {} } };
-  const noVersionEndpoint = (axios: any) => axios.get.mockRejectedValue(new Error('unreachable'));
+  // A failed call as axios reports it: an error carrying the answer.
+  const boom = Object.assign(new Error('Request failed with status code 500'), {
+    response: { status: 500, data: Buffer.from('{"error":"boom"}'), headers: {} },
+  });
+  const noVersionEndpoint = (axios: MockedHttp) => axios.get.mockRejectedValue(new Error('unreachable'));
 
   it('a failed provide warns and the next entry is still provided', async () => {
     const config = writeProject(
       'sanshainUrl: http://localhost:3000\nserviceName: svc\nprovides:\n  - file: openapi.yaml\n  - file: asyncapi.yaml\n    apiType: asyncapi\n',
-      { 'openapi.yaml': OPENAPI, 'asyncapi.yaml': ASYNCAPI }
+      { 'openapi.yaml': OPENAPI, 'asyncapi.yaml': ASYNCAPI },
     );
-    const mock = (axios: any) => {
+    const mock = (axios: MockedHttp) => {
       noVersionEndpoint(axios);
-      axios.post.mockImplementation((url: string) =>
-        url === '/provide' ? Promise.reject(boom) : Promise.resolve({ status: 202, data: PROVIDE_OK, headers: {} })
+      axios.post.mockImplementation((url) =>
+        url === '/provide' ? Promise.reject(boom) : Promise.resolve({ status: 202, data: PROVIDE_OK, headers: {} }),
       );
     };
 
@@ -559,7 +606,7 @@ describe('best effort softens failed calls only', () => {
     expect(run.exitCode).toBeUndefined();
     expect(run.err).toContain('Error providing spec: Request failed with status 500');
     expect(run.err).toContain('Continuing (best effort)');
-    expect(run.axios.post.mock.calls.map((c: any[]) => c[0])).toEqual(['/provide', '/provide/asyncapi']);
+    expect(run.axios.post.mock.calls.map((c) => c[0])).toEqual(['/provide', '/provide/asyncapi']);
     expect(run.out).toContain('✓ Provided svc 1.0.0');
     expect(run.out).not.toContain('Successfully provided');
 
@@ -586,17 +633,17 @@ describe('best effort softens failed calls only', () => {
         '    endpoints:',
         '      - method: GET',
         '        path: /y',
-        ''
-      ].join('\n')
+        '',
+      ].join('\n'),
     );
 
     const run = await runCli(['-c', config, '--best-effort', 'require'], (axios) => {
-      axios.get.mockImplementation((url: string, options: any) =>
+      axios.get.mockImplementation((url, options) =>
         url === '/version'
           ? Promise.reject(new Error('unreachable'))
           : options.params.producername === 'ghost'
             ? Promise.reject(boom)
-            : Promise.resolve({ status: 200, data: Buffer.from('paths: {}'), headers: {} })
+            : Promise.resolve({ status: 200, data: Buffer.from('paths: {}'), headers: {} }),
       );
     });
 
@@ -610,20 +657,20 @@ describe('best effort softens failed calls only', () => {
     expect(run.axios.get).not.toHaveBeenCalled();
     expect(run.axios.put).not.toHaveBeenCalled();
   };
-  const prefixes: Record<string, string> = {
+  const prefixes = {
     provide: 'Error providing spec',
     require: 'Error during require',
-    catalog: 'Error pushing catalog'
-  };
+    catalog: 'Error pushing catalog',
+  } as const;
   const broken: Record<string, { yaml: string; error: string }> = {
     'invalid YAML': { yaml: 'sanshainUrl: [http://localhost:3000\n', error: 'deficient indentation' },
     'a 1.x field': {
       yaml: 'sanshainUrl: http://localhost:3000\nserviceName: svc\ntimeout: 30\n',
-      error: "'timeout' is no longer supported"
-    }
+      error: "'timeout' is no longer supported",
+    },
   };
 
-  for (const command of ['provide', 'require', 'catalog']) {
+  for (const command of ['provide', 'require', 'catalog'] as const) {
     describe(`${command}: a missing sanshain.yaml`, () => {
       const missing = () => path.join(projectDir, 'sanshain.yaml');
 
@@ -641,7 +688,7 @@ describe('best effort softens failed calls only', () => {
 
         expect(run.exitCode).toBeUndefined();
         expect(run.err).toBe(
-          `${prefixes[command]}: Configuration file not found: ${missing()}\nContinuing (best effort)`
+          `${prefixes[command]}: Configuration file not found: ${missing()}\nContinuing (best effort)`,
         );
         noCall(run);
       });
@@ -737,7 +784,7 @@ describe('best effort softens failed calls only', () => {
     ['catalog', 'strict: true\n', 'serviceName is required'],
     ['provide', 'strict: true\nserviceName: svc\n', 'No provide section'],
     ['require', 'strict: true\nserviceName: svc\n', 'No requires configured'],
-    ['catalog', 'strict: true\nserviceName: svc\n', 'no catalogInfo']
+    ['catalog', 'strict: true\nserviceName: svc\n', 'no catalogInfo'],
   ])('%s: missing configuration under strict fails also with best effort', async (command, yaml, message) => {
     const config = writeProject('sanshainUrl: http://localhost:3000\n' + yaml);
 
@@ -750,9 +797,12 @@ describe('best effort softens failed calls only', () => {
 
 describe('an unknown provide apiType', () => {
   const project = () =>
-    writeProject('sanshainUrl: http://localhost:3000\nserviceName: svc\nprovides:\n  - file: api.raml\n    apiType: raml\n', {
-      'api.raml': '#%RAML 1.0\n'
-    });
+    writeProject(
+      'sanshainUrl: http://localhost:3000\nserviceName: svc\nprovides:\n  - file: api.raml\n    apiType: raml\n',
+      {
+        'api.raml': '#%RAML 1.0\n',
+      },
+    );
 
   it('fails before any call instead of reporting success', async () => {
     const run = await runCli(['-c', project(), 'provide']);
@@ -775,7 +825,7 @@ describe('an unknown provide apiType', () => {
 });
 
 describe('secrets in the output', () => {
-  const failing = (axios: any) => {
+  const failing = (axios: MockedHttp) => {
     const boom = { response: { status: 500, data: Buffer.from('{"error":"boom"}'), headers: {} } };
     axios.get.mockRejectedValue(boom);
     axios.post.mockRejectedValue(boom);
@@ -793,33 +843,36 @@ describe('secrets in the output', () => {
     '    endpoints:',
     '      - method: GET',
     '        path: /users',
-    ''
+    '',
   ].join('\n');
 
-  it.each(['provide', 'require', 'catalog'])('%s prints neither the token nor the password of the URL', async (command) => {
-    const config = writeProject('sanshainUrl: https://ci:pw-in-url@sanshain.example\n' + yaml, {
-      'openapi.yaml': 'openapi: 3.0.3\n',
-      'catalog-info.yaml': 'kind: Component\n'
-    });
-    process.env.SANSHAIN_TOKEN = 'san_from_env';
+  it.each(['provide', 'require', 'catalog'])(
+    '%s prints neither the token nor the password of the URL',
+    async (command) => {
+      const config = writeProject('sanshainUrl: https://ci:pw-in-url@sanshain.example\n' + yaml, {
+        'openapi.yaml': 'openapi: 3.0.3\n',
+        'catalog-info.yaml': 'kind: Component\n',
+      });
+      process.env.SANSHAIN_TOKEN = 'san_from_env';
 
-    for (const args of [[], ['--token', 'san_from_flag']]) {
-      const run = await runCli(['-c', config, ...args, command], failing);
+      for (const args of [[], ['--token', 'san_from_flag']]) {
+        const run = await runCli(['-c', config, ...args, command], failing);
 
-      expect(run.exitCode).toBe(1);
-      expect(`${run.out}\n${run.err}`).toContain('https://sanshain.example/');
-      for (const secret of ['san_from_env', 'san_from_flag', 'pw-in-url', 'ci:']) {
-        expect(run.out).not.toContain(secret);
-        expect(run.err).not.toContain(secret);
+        expect(run.exitCode).toBe(1);
+        expect(`${run.out}\n${run.err}`).toContain('https://sanshain.example/');
+        for (const secret of ['san_from_env', 'san_from_flag', 'pw-in-url', 'ci:']) {
+          expect(run.out).not.toContain(secret);
+          expect(run.err).not.toContain(secret);
+        }
       }
-    }
-  });
+    },
+  );
 });
 
 describe('SANSHAIN_URL precedence', () => {
   const yaml = 'sanshainUrl: http://from-yaml\nserviceName: svc\nprovide:\n  file: openapi.yaml\n';
-  const ok = (axios: any) => axios.post.mockResolvedValue({ status: 202, data: PROVIDE_OK, headers: {} });
-  const baseUrl = (run: RunResult) => run.axios.create.mock.calls[0][0].baseURL;
+  const ok = (axios: MockedHttp) => axios.post.mockResolvedValue({ status: 202, data: PROVIDE_OK, headers: {} });
+  const baseUrl = (run: RunResult) => nthCall(run.axios.create, 0)[0].baseURL;
 
   it('uses sanshainUrl from the yaml without flag or environment', async () => {
     const config = writeProject(yaml, { 'openapi.yaml': 'openapi: 3.0.3\n' });
@@ -841,14 +894,18 @@ describe('SANSHAIN_URL precedence', () => {
 
 describe('SANSHAIN_BEST_EFFORT on the command line', () => {
   it.each(['1', 'TRUE', ' true '])('%j turns a failed provide into a warning', async (value) => {
-    const config = writeProject('sanshainUrl: http://localhost:3000\nserviceName: svc\nprovide:\n  file: missing.yaml\n');
+    const config = writeProject(
+      'sanshainUrl: http://localhost:3000\nserviceName: svc\nprovide:\n  file: missing.yaml\n',
+    );
     process.env.SANSHAIN_BEST_EFFORT = value;
     const run = await runCli(['-c', config, 'provide']);
     expect(run.exitCode).toBeUndefined();
   });
 
   it('"yes" is off', async () => {
-    const config = writeProject('sanshainUrl: http://localhost:3000\nserviceName: svc\nprovide:\n  file: missing.yaml\n');
+    const config = writeProject(
+      'sanshainUrl: http://localhost:3000\nserviceName: svc\nprovide:\n  file: missing.yaml\n',
+    );
     process.env.SANSHAIN_BEST_EFFORT = 'yes';
     const run = await runCli(['-c', config, 'provide']);
     expect(run.exitCode).toBe(1);
@@ -869,8 +926,8 @@ describe('unknown fields on the command line', () => {
         '    endpoints:',
         '      - method: GET',
         '        path: /users',
-        ''
-      ].join('\n')
+        '',
+      ].join('\n'),
     );
 
   it('the cat shows when a later validation error follows', async () => {
@@ -920,9 +977,12 @@ describe('unknown fields on the command line', () => {
   });
 
   it('without strict: one cat on stderr, then the provide runs normally', async () => {
-    const config = writeProject('sanshainUrl: http://localhost:3000\nserviceName: svc\ncatalogInf: x\nprovide:\n  file: openapi.yaml\n', {
-      'openapi.yaml': 'openapi: 3.0.3\n'
-    });
+    const config = writeProject(
+      'sanshainUrl: http://localhost:3000\nserviceName: svc\ncatalogInf: x\nprovide:\n  file: openapi.yaml\n',
+      {
+        'openapi.yaml': 'openapi: 3.0.3\n',
+      },
+    );
 
     const run = await runCli(['-c', config, 'provide'], (axios) => {
       axios.post.mockResolvedValue({ status: 202, data: PROVIDE_OK, headers: {} });
@@ -937,7 +997,7 @@ describe('unknown fields on the command line', () => {
   it('strict fails a file that otherwise validates even under best-effort', async () => {
     const config = writeProject(
       'sanshainUrl: http://localhost:3000\nserviceName: svc\nstrict: true\ncatalogInf: x\nprovide:\n  file: openapi.yaml\n',
-      { 'openapi.yaml': 'openapi: 3.0.3\n' }
+      { 'openapi.yaml': 'openapi: 3.0.3\n' },
     );
 
     const run = await runCli(['-c', config, '--best-effort', 'require']);
@@ -957,12 +1017,12 @@ describe('catalog', () => {
     data: JSON.stringify({
       system: 'orders-service',
       trunk,
-      resources: ['resource:default/orders-db', 'resource:default/orders-bucket']
+      resources: ['resource:default/orders-db', 'resource:default/orders-bucket'],
     }),
-    headers: {}
+    headers: {},
   });
   const httpError = (status: number, body: unknown) => ({
-    response: { status, data: JSON.stringify(body), headers: {} }
+    response: { status, data: JSON.stringify(body), headers: {} },
   });
 
   it('a plain build pushes the file relative to sanshain.yaml, without trunk or tag', async () => {
@@ -972,16 +1032,18 @@ describe('catalog', () => {
 
     expect(run.exitCode).toBeUndefined();
     expect(run.axios.put).toHaveBeenCalledTimes(1);
-    expect(run.axios.put.mock.calls[0][0]).toBe('/catalog/orders-service');
-    expect(run.axios.put.mock.calls[0][1]).toEqual({ catalog_info_yaml: CATALOG });
+    expect(nthCall(run.axios.put, 0)[0]).toBe('/catalog/orders-service');
+    expect(nthCall(run.axios.put, 0)[1]).toEqual({ catalog_info_yaml: CATALOG });
   });
 
   it('a trunk build sends trunk: true', async () => {
     const config = writeProject(yaml(), { 'backstage/catalog-info.yaml': CATALOG });
 
-    const run = await runCli(['-c', config, '--trunk', 'catalog'], (axios) => axios.put.mockResolvedValue(recorded(true)));
+    const run = await runCli(['-c', config, '--trunk', 'catalog'], (axios) =>
+      axios.put.mockResolvedValue(recorded(true)),
+    );
 
-    expect(run.axios.put.mock.calls[0][1]).toEqual({ catalog_info_yaml: CATALOG, trunk: true });
+    expect(nthCall(run.axios.put, 0)[1]).toEqual({ catalog_info_yaml: CATALOG, trunk: true });
   });
 
   it('SANSHAIN_TRUNK=1 is a trunk build too', async () => {
@@ -990,29 +1052,29 @@ describe('catalog', () => {
 
     const run = await runCli(['-c', config, 'catalog'], (axios) => axios.put.mockResolvedValue(recorded(true)));
 
-    expect(run.axios.put.mock.calls[0][1]).toEqual({ catalog_info_yaml: CATALOG, trunk: true });
+    expect(nthCall(run.axios.put, 0)[1]).toEqual({ catalog_info_yaml: CATALOG, trunk: true });
   });
 
   it('a tag build sends neither trunk nor tag', async () => {
     const config = writeProject(yaml(), { 'backstage/catalog-info.yaml': CATALOG });
 
     const run = await runCli(['-c', config, '--tag', 'R1', 'catalog'], (axios) =>
-      axios.put.mockResolvedValue(recorded(false))
+      axios.put.mockResolvedValue(recorded(false)),
     );
 
     expect(run.exitCode).toBeUndefined();
-    expect(run.axios.put.mock.calls[0][1]).toEqual({ catalog_info_yaml: CATALOG });
+    expect(nthCall(run.axios.put, 0)[1]).toEqual({ catalog_info_yaml: CATALOG });
   });
 
   it('URL-encodes the service name', async () => {
     const config = writeProject(
       'sanshainUrl: http://localhost:3000\nserviceName: team/orders service\ncatalogInfo: c.yaml\n',
-      { 'c.yaml': CATALOG }
+      { 'c.yaml': CATALOG },
     );
 
     const run = await runCli(['-c', config, 'catalog'], (axios) => axios.put.mockResolvedValue(recorded(false)));
 
-    expect(run.axios.put.mock.calls[0][0]).toBe('/catalog/team%2Forders%20service');
+    expect(nthCall(run.axios.put, 0)[0]).toBe('/catalog/team%2Forders%20service');
   });
 
   it('gzips the payload when compression is on', async () => {
@@ -1020,19 +1082,21 @@ describe('catalog', () => {
 
     const run = await runCli(['-c', config, 'catalog'], (axios) => axios.put.mockResolvedValue(recorded(false)));
 
-    const [, body, options] = run.axios.put.mock.calls[0];
+    const [, body, options] = nthCall(run.axios.put, 0);
     expect(options.headers['Content-Encoding']).toBe('gzip');
-    expect(JSON.parse(require('zlib').gunzipSync(body).toString('utf8'))).toEqual({ catalog_info_yaml: CATALOG });
+    expect(JSON.parse(zlib.gunzipSync(body as unknown as Buffer).toString('utf8'))).toEqual({
+      catalog_info_yaml: CATALOG,
+    });
   });
 
   it('prints the recorded resources on 200', async () => {
     const config = writeProject(yaml(), { 'backstage/catalog-info.yaml': CATALOG });
 
     const trunkRun = await runCli(['-c', config, '--trunk', 'catalog'], (axios) =>
-      axios.put.mockResolvedValue(recorded(true))
+      axios.put.mockResolvedValue(recorded(true)),
     );
     expect(trunkRun.out).toContain(
-      'Catalog recorded for orders-service (main+dev): 2 resources\n  resource:default/orders-db\n  resource:default/orders-bucket'
+      'Catalog recorded for orders-service (main+dev): 2 resources\n  resource:default/orders-db\n  resource:default/orders-bucket',
     );
 
     const devRun = await runCli(['-c', config, 'catalog'], (axios) => axios.put.mockResolvedValue(recorded(false)));
@@ -1151,16 +1215,12 @@ describe('catalog', () => {
 
 describe('version', () => {
   it('--version reports the package version', () => {
-    const { program } = require('../src/cli');
-    expect(program.version()).toBe(require('../package.json').version);
+    expect(isolated().cli.program.version()).toBe(manifest.version);
   });
 
   it('is read from package.json, never written into the CLI', () => {
-    let program: any;
-    jest.isolateModules(() => {
-      jest.doMock('../package.json', () => ({ version: '9.8.7' }));
-      program = require('../src/cli').program;
-    });
+    jest.doMock('../package.json', () => ({ version: '9.8.7' }));
+    const { program } = isolated().cli;
     jest.dontMock('../package.json');
     expect(program.version()).toBe('9.8.7');
   });
@@ -1175,13 +1235,13 @@ describe('package', () => {
     for (const file of fs.readdirSync(srcDir).filter((f) => f.endsWith('.ts'))) {
       const text = fs.readFileSync(path.join(srcDir, file), 'utf8');
       for (const m of text.matchAll(/(?:from\s+|require\()['"]([^'".][^'"]*)['"]/g)) {
-        const name = m[1].startsWith('@') ? m[1].split('/').slice(0, 2).join('/') : m[1].split('/')[0];
-        imported.add(name);
+        const spec = m[1] ?? '';
+        imported.add(spec.startsWith('@') ? spec.split('/').slice(0, 2).join('/') : (spec.split('/')[0] ?? ''));
       }
     }
-    const builtins = new Set(require('module').builtinModules);
+    const builtins = new Set(builtinModules);
     const external = [...imported].filter((n) => !builtins.has(n) && !n.startsWith('node:')).sort();
-    expect(Object.keys(require('../package.json').dependencies).sort()).toEqual(external);
+    expect(Object.keys(manifest.dependencies).sort()).toEqual(external);
   });
 });
 
@@ -1190,14 +1250,14 @@ describe('no provide skip, no dry-run caching', () => {
   // The server answers the real content hash, which is what the old local
   // skip compared against.
   const SPEC = 'openapi: 3.0.3\n';
-  const ok = (axios: any) =>
+  const ok = (axios: MockedHttp) =>
     axios.post.mockResolvedValue({
       status: 202,
       data: JSON.stringify({
         ...JSON.parse(PROVIDE_OK),
-        content_hash: 'sha256:' + require('crypto').createHash('sha256').update(SPEC, 'utf8').digest('hex')
+        content_hash: 'sha256:' + crypto.createHash('sha256').update(SPEC, 'utf8').digest('hex'),
       }),
-      headers: {}
+      headers: {},
     });
   const statePath = () => path.join(workDir, 'node_modules/.cache/sanshain/state.json');
 
@@ -1206,12 +1266,12 @@ describe('no provide skip, no dry-run caching', () => {
 
     const dry = await runCli(['-c', config, 'provide', '--dry-run'], ok);
     expect(dry.axios.post).toHaveBeenCalledTimes(1);
-    expect(dry.axios.post.mock.calls[0][1].dry_run).toBe(true);
+    expect(nthCall(dry.axios.post, 0)[1].dry_run).toBe(true);
 
     const real = await runCli(['-c', config, 'provide'], ok);
     expect(real.exitCode).toBeUndefined();
     expect(real.axios.post).toHaveBeenCalledTimes(1);
-    expect(real.axios.post.mock.calls[0][1].dry_run).toBe(false);
+    expect(nthCall(real.axios.post, 0)[1].dry_run).toBe(false);
     expect(real.out).not.toContain('unchanged');
   });
 
@@ -1231,9 +1291,15 @@ describe('no provide skip, no dry-run caching', () => {
     fs.writeFileSync(
       statePath(),
       JSON.stringify({
-        provides: { 'openapi.yaml': { content_hash: 'sha256:' + require('crypto').createHash('sha256').update(SPEC, 'utf8').digest('hex'), version: '1.0.0', last_provided: '2026-01-01T00:00:00Z' } },
-        requires: {}
-      })
+        provides: {
+          'openapi.yaml': {
+            content_hash: 'sha256:' + crypto.createHash('sha256').update(SPEC, 'utf8').digest('hex'),
+            version: '1.0.0',
+            last_provided: '2026-01-01T00:00:00Z',
+          },
+        },
+        requires: {},
+      }),
     );
 
     const run = await runCli(['-c', config, 'provide'], ok);
@@ -1252,18 +1318,18 @@ describe('no provide skip, no dry-run caching', () => {
     '    endpoints:',
     '      - method: GET',
     '        path: /users',
-    ''
+    '',
   ].join('\n');
-  const withEtag = (axios: any) =>
+  const withEtag = (axios: MockedHttp) =>
     axios.get.mockResolvedValue({ status: 200, data: Buffer.from('paths: {}'), headers: { etag: '"sha256:e1"' } });
-  const sentEtag = (run: RunResult) => run.axios.get.mock.calls[0][1].headers['If-None-Match'];
+  const sentEtag = (run: RunResult) => nthCall(run.axios.get, 0)[1].headers['If-None-Match'];
 
   it('a dry-run require records no ETag and writes nothing', async () => {
     const config = writeProject(REQUIRE_YAML);
 
     const dry = await runCli(['-c', config, 'require', '--dry-run'], withEtag);
     expect(dry.exitCode).toBeUndefined();
-    expect(dry.axios.get.mock.calls[0][1].params.dry_run).toBe(true);
+    expect(nthCall(dry.axios.get, 0)[1].params.dry_run).toBe(true);
     expect(fs.existsSync(statePath())).toBe(false);
     expect(fs.existsSync(path.join(projectDir, 'gen'))).toBe(false);
     expect(dry.out).toContain('Dry run - users.yaml not written to gen');
@@ -1276,11 +1342,11 @@ describe('no provide skip, no dry-run caching', () => {
     const config = writeProject(REQUIRE_YAML + '      - method: POST\n        path: /users\n');
 
     const dry = await runCli(['-c', config, 'require', '--dry-run'], (axios) =>
-      axios.post.mockResolvedValue({ status: 200, data: Buffer.from('paths: {}'), headers: { etag: '"sha256:e1"' } })
+      axios.post.mockResolvedValue({ status: 200, data: Buffer.from('paths: {}'), headers: { etag: '"sha256:e1"' } }),
     );
 
     expect(dry.exitCode).toBeUndefined();
-    expect(dry.axios.post.mock.calls[0][1].dry_run).toBe(true);
+    expect(nthCall(dry.axios.post, 0)[1].dry_run).toBe(true);
     expect(fs.existsSync(path.join(projectDir, 'gen'))).toBe(false);
     expect(fs.existsSync(statePath())).toBe(false);
   });
@@ -1291,7 +1357,7 @@ describe('no provide skip, no dry-run caching', () => {
     const first = await runCli(['-c', config, 'require'], withEtag);
     expect(sentEtag(first)).toBeUndefined();
     const second = await runCli(['-c', config, 'require'], (axios) =>
-      axios.get.mockResolvedValue({ status: 304, data: Buffer.from(''), headers: {} })
+      axios.get.mockResolvedValue({ status: 304, data: Buffer.from(''), headers: {} }),
     );
 
     expect(sentEtag(second)).toBe('"sha256:e1"');
@@ -1307,18 +1373,18 @@ describe('the require ETag per output directory', () => {
     `    outputDirectory: ${outputDirectory}`,
     '    endpoints:',
     '      - method: GET',
-    '        path: /users'
+    '        path: /users',
   ];
   const yaml = (...dirs: string[]) =>
     ['sanshainUrl: http://localhost:3000', 'serviceName: svc', 'requires:', ...dirs.flatMap(entry), ''].join('\n');
   // A 304 whenever an ETag is sent, as the service answers an unchanged spec.
-  const server = (axios: any) =>
-    axios.get.mockImplementation((_url: string, options: any) =>
+  const server = (axios: MockedHttp) =>
+    axios.get.mockImplementation((_url, options) =>
       Promise.resolve(
         options.headers['If-None-Match']
           ? { status: 304, data: Buffer.from(''), headers: {} }
-          : { status: 200, data: Buffer.from('paths: {}'), headers: { etag: '"sha256:e1"' } }
-      )
+          : { status: 200, data: Buffer.from('paths: {}'), headers: { etag: '"sha256:e1"' } },
+      ),
     );
 
   it('the same endpoint required into two directories is written to both', async () => {
@@ -1329,9 +1395,9 @@ describe('the require ETag per output directory', () => {
     expect(run.exitCode).toBeUndefined();
     expect(fs.readFileSync(path.join(projectDir, 'gen/a/users.yaml'), 'utf8')).toBe('paths: {}');
     expect(fs.readFileSync(path.join(projectDir, 'gen/b/users.yaml'), 'utf8')).toBe('paths: {}');
-    expect(Object.keys(JSON.parse(fs.readFileSync(statePath(), 'utf8')).requires)).toEqual([
+    expect(Object.keys((JSON.parse(fs.readFileSync(statePath(), 'utf8')) as { requires: object }).requires)).toEqual([
       'users|1.0.0|GET|/users|out=gen/a',
-      'users|1.0.0|GET|/users|out=gen/b'
+      'users|1.0.0|GET|/users|out=gen/b',
     ]);
   });
 
@@ -1342,7 +1408,7 @@ describe('the require ETag per output directory', () => {
 
     const run = await runCli(['-c', config, 'require'], server);
 
-    expect(run.axios.get.mock.calls[0][1].headers['If-None-Match']).toBeUndefined();
+    expect(nthCall(run.axios.get, 0)[1].headers['If-None-Match']).toBeUndefined();
     expect(fs.readFileSync(path.join(projectDir, 'gen/users.yaml'), 'utf8')).toBe('paths: {}');
   });
 
@@ -1352,7 +1418,7 @@ describe('the require ETag per output directory', () => {
 
     const run = await runCli(['-c', config, 'require'], server);
 
-    expect(run.axios.get.mock.calls[0][1].headers['If-None-Match']).toBe('"sha256:e1"');
+    expect(nthCall(run.axios.get, 0)[1].headers['If-None-Match']).toBe('"sha256:e1"');
     expect(run.out).toContain('unchanged (304)');
   });
 });
@@ -1370,15 +1436,15 @@ describe('format: openapi on asyncapi requires', () => {
       '    outputDirectory: gen',
       extra,
       '    endpoints:',
-      ...Array.from({ length: endpoints }, (_, i) => `      - method: SUB\n        path: user/signup${i}`),
-      ''
+      ...Array.from({ length: endpoints }, (_, i) => `      - method: SUB\n        path: user/signup${String(i)}`),
+      '',
     ]
       .filter((line) => line !== '')
       .join('\n') + '\n';
   const answer = (body: string, etag?: string) => ({
     status: 200,
     data: Buffer.from(body),
-    headers: etag ? { etag } : {}
+    headers: etag ? { etag } : {},
   });
   const output = (name: string) => path.join(projectDir, 'gen', name);
 
@@ -1389,8 +1455,8 @@ describe('format: openapi on asyncapi requires', () => {
 
     expect(run.exitCode).toBeUndefined();
     expect(run.err).not.toContain('O_o');
-    expect(run.axios.get.mock.calls[0][0]).toBe('/require/asyncapi');
-    expect(run.axios.get.mock.calls[0][1].params.format).toBe('openapi');
+    expect(nthCall(run.axios.get, 0)[0]).toBe('/require/asyncapi');
+    expect(nthCall(run.axios.get, 0)[1].params.format).toBe('openapi');
     expect(fs.readFileSync(output('events.yaml'), 'utf8')).toBe(OPENAPI);
   });
 
@@ -1400,7 +1466,7 @@ describe('format: openapi on asyncapi requires', () => {
     const run = await runCli(['-c', config, 'require'], (axios) => axios.post.mockResolvedValue(answer(OPENAPI)));
 
     expect(run.exitCode).toBeUndefined();
-    const [url, body, options] = run.axios.post.mock.calls[0];
+    const [url, body, options] = nthCall(run.axios.post, 0);
     expect(url).toBe('/require-bundle');
     expect(options.params).toEqual({ format: 'openapi' });
     expect(body).not.toHaveProperty('format');
@@ -1411,12 +1477,14 @@ describe('format: openapi on asyncapi requires', () => {
     const single = writeProject(entry('    apiType: asyncapi'));
     const run = await runCli(['-c', single, 'require'], (axios) => axios.get.mockResolvedValue(answer(ASYNCAPI)));
     expect(run.exitCode).toBeUndefined();
-    expect(run.axios.get.mock.calls[0][1].params).not.toHaveProperty('format');
+    expect(nthCall(run.axios.get, 0)[1].params).not.toHaveProperty('format');
 
     const bundle = writeProject(entry('    apiType: asyncapi', 2));
-    const bundleRun = await runCli(['-c', bundle, 'require'], (axios) => axios.post.mockResolvedValue(answer(ASYNCAPI)));
+    const bundleRun = await runCli(['-c', bundle, 'require'], (axios) =>
+      axios.post.mockResolvedValue(answer(ASYNCAPI)),
+    );
     expect(bundleRun.exitCode).toBeUndefined();
-    expect(bundleRun.axios.post.mock.calls[0][2]).not.toHaveProperty('params');
+    expect(nthCall(bundleRun.axios.post, 0)[2]).not.toHaveProperty('params');
   });
 
   it('format with another apiType is rejected before any call', async () => {
@@ -1452,11 +1520,13 @@ describe('format: openapi on asyncapi requires', () => {
     const config = writeProject(entry('    apiType: asyncapi\n    format: openapi'));
 
     const run = await runCli(['-c', config, 'require'], (axios) =>
-      axios.get.mockImplementation(async (url: string) =>
-        url === '/version'
-          ? { status: 200, data: JSON.stringify({ version: '2.3.0' }), headers: {} }
-          : answer(ASYNCAPI)
-      )
+      axios.get.mockImplementation((url) =>
+        Promise.resolve(
+          url === '/version'
+            ? { status: 200, data: JSON.stringify({ version: '2.3.0' }), headers: {} }
+            : answer(ASYNCAPI),
+        ),
+      ),
     );
 
     expect(run.exitCode).toBe(1);
@@ -1481,11 +1551,13 @@ describe('format: openapi on asyncapi requires', () => {
     const config = writeProject(entry('    apiType: asyncapi\n    format: openapi'));
 
     const run = await runCli(['-c', config, '--best-effort', 'require'], (axios) =>
-      axios.get.mockImplementation(async (url: string) =>
-        url === '/version'
-          ? { status: 200, data: JSON.stringify({ version: '2.3.0' }), headers: {} }
-          : answer(ASYNCAPI)
-      )
+      axios.get.mockImplementation((url) =>
+        Promise.resolve(
+          url === '/version'
+            ? { status: 200, data: JSON.stringify({ version: '2.3.0' }), headers: {} }
+            : answer(ASYNCAPI),
+        ),
+      ),
     );
 
     expect(run.exitCode).toBeUndefined();
@@ -1494,13 +1566,19 @@ describe('format: openapi on asyncapi requires', () => {
     expect(fs.existsSync(output('events.yaml'))).toBe(false);
   });
 
-  const rejectFormat = (serverVersion: string | null, error: string) => (axios: any) =>
-    axios.get.mockImplementation(async (url: string) => {
+  const rejectFormat = (serverVersion: string | null, error: string) => (axios: MockedHttp) =>
+    axios.get.mockImplementation((url) => {
       if (url === '/version') {
-        if (serverVersion === null) throw new Error('connection refused');
-        return { status: 200, data: JSON.stringify({ version: serverVersion }), headers: {} };
+        return serverVersion === null
+          ? Promise.reject(new Error('connection refused'))
+          : Promise.resolve({ status: 200, data: JSON.stringify({ version: serverVersion }), headers: {} });
       }
-      throw { response: { status: 400, data: JSON.stringify({ error }), headers: {} } };
+      // A failed call as axios reports it: an error carrying the answer.
+      return Promise.reject(
+        Object.assign(new Error('Request failed with status code 400'), {
+          response: { status: 400, data: JSON.stringify({ error }), headers: {} },
+        }),
+      );
     });
 
   it('a 400 on the single route from a pre-2.4.0 service means it needs 2.4.0', async () => {
@@ -1546,7 +1624,10 @@ describe('format: openapi on asyncapi requires', () => {
   it('best-effort turns the old-service 400 into a warning and writes nothing', async () => {
     const config = writeProject(entry('    apiType: asyncapi\n    format: openapi'));
 
-    const run = await runCli(['-c', config, '--best-effort', 'require'], rejectFormat('2.3.0', 'unknown field `format`'));
+    const run = await runCli(
+      ['-c', config, '--best-effort', 'require'],
+      rejectFormat('2.3.0', 'unknown field `format`'),
+    );
 
     expect(run.exitCode).toBeUndefined();
     expect(run.err).toContain('format: openapi needs Sanshain Service 2.4.0 or later (server is 2.3.0)');
@@ -1557,25 +1638,25 @@ describe('format: openapi on asyncapi requires', () => {
   it('the ETag is kept per format', async () => {
     const withFormat = entry('    apiType: asyncapi\n    format: openapi');
     const without = entry('    apiType: asyncapi');
-    const sent = (run: RunResult) => run.axios.get.mock.calls[0][1].headers['If-None-Match'];
+    const sent = (run: RunResult) => nthCall(run.axios.get, 0)[1].headers['If-None-Match'];
 
     const first = await runCli(['-c', writeProject(withFormat), 'require'], (axios) =>
-      axios.get.mockResolvedValue(answer(OPENAPI, '"openapi-etag"'))
+      axios.get.mockResolvedValue(answer(OPENAPI, '"openapi-etag"')),
     );
     expect(sent(first)).toBeUndefined();
 
     const plain = await runCli(['-c', writeProject(without), 'require'], (axios) =>
-      axios.get.mockResolvedValue(answer(ASYNCAPI, '"asyncapi-etag"'))
+      axios.get.mockResolvedValue(answer(ASYNCAPI, '"asyncapi-etag"')),
     );
     expect(sent(plain)).toBeUndefined();
 
     const again = await runCli(['-c', writeProject(withFormat), 'require'], (axios) =>
-      axios.get.mockResolvedValue({ status: 304, data: Buffer.from(''), headers: {} })
+      axios.get.mockResolvedValue({ status: 304, data: Buffer.from(''), headers: {} }),
     );
     expect(sent(again)).toBe('"openapi-etag"');
 
     const plainAgain = await runCli(['-c', writeProject(without), 'require'], (axios) =>
-      axios.get.mockResolvedValue({ status: 304, data: Buffer.from(''), headers: {} })
+      axios.get.mockResolvedValue({ status: 304, data: Buffer.from(''), headers: {} }),
     );
     expect(sent(plainAgain)).toBe('"asyncapi-etag"');
   });
@@ -1586,17 +1667,17 @@ describe('Sanshain-Warning', () => {
   const BOTH = 'trunk and tag are mutually exclusive - this build is recorded in neither';
   const PROVIDE_YAML = 'sanshainUrl: http://localhost:3000\nserviceName: svc\nprovide:\n  file: openapi.yaml\n';
   const SPEC = { 'openapi.yaml': 'openapi: 3.0.3\n' };
-  const warned = (warning: string | string[], data = PROVIDE_OK, status = 202) => ({
+  const warned = (warning: string | string[], data: string | Buffer = PROVIDE_OK, status = 202) => ({
     status,
     data,
-    headers: { 'sanshain-warning': warning }
+    headers: { 'sanshain-warning': warning },
   });
 
   it('provide prints a single warning and exits 0', async () => {
     const config = writeProject(PROVIDE_YAML, SPEC);
 
     const run = await runCli(['-c', config, '--tag', 'R9', 'provide'], (axios) =>
-      axios.post.mockResolvedValue(warned(NO_BRANCH))
+      axios.post.mockResolvedValue(warned(NO_BRANCH)),
     );
 
     expect(run.exitCode).toBeUndefined();
@@ -1608,7 +1689,7 @@ describe('Sanshain-Warning', () => {
     const config = writeProject(PROVIDE_YAML, SPEC);
 
     const run = await runCli(['-c', config, 'provide'], (axios) =>
-      axios.post.mockResolvedValue(warned(['first, with a comma', 'second']))
+      axios.post.mockResolvedValue(warned(['first, with a comma', 'second'])),
     );
 
     expect(run.exitCode).toBeUndefined();
@@ -1619,7 +1700,7 @@ describe('Sanshain-Warning', () => {
     const config = writeProject(`${PROVIDE_YAML}strict: true\n`, SPEC);
 
     const run = await runCli(['-c', config, 'provide'], (axios) =>
-      axios.post.mockResolvedValue(warned([NO_BRANCH, 'second']))
+      axios.post.mockResolvedValue(warned([NO_BRANCH, 'second'])),
     );
 
     expect(run.exitCode).toBe(1);
@@ -1633,7 +1714,7 @@ describe('Sanshain-Warning', () => {
     const config = writeProject(`${PROVIDE_YAML}strict: true\n`, SPEC);
 
     const run = await runCli(['-c', config, '--best-effort', 'provide'], (axios) =>
-      axios.post.mockResolvedValue(warned(NO_BRANCH))
+      axios.post.mockResolvedValue(warned(NO_BRANCH)),
     );
 
     expect(run.exitCode).toBe(1);
@@ -1642,9 +1723,9 @@ describe('Sanshain-Warning', () => {
 
   it('an error response carrying a warning prints it, and under strict the error before the strict failure', async () => {
     const config = writeProject(PROVIDE_YAML, SPEC);
-    const failing = (axios: any) => {
+    const failing = (axios: MockedHttp) => {
       axios.post.mockRejectedValue({
-        response: { status: 500, data: JSON.stringify({ error: 'boom' }), headers: { 'sanshain-warning': 'a, b' } }
+        response: { status: 500, data: JSON.stringify({ error: 'boom' }), headers: { 'sanshain-warning': 'a, b' } },
       });
       axios.get.mockResolvedValue({ status: 200, data: JSON.stringify({ version: '2.4.0' }), headers: {} });
     };
@@ -1665,11 +1746,13 @@ describe('Sanshain-Warning', () => {
 
   it('retire prints the warning too', async () => {
     const config = writeProject(
-      'sanshainUrl: http://localhost:3000\nserviceName: svc\nprovides:\n  - apiType: asyncapi\n    retired: true\n'
+      'sanshainUrl: http://localhost:3000\nserviceName: svc\nprovides:\n  - apiType: asyncapi\n    retired: true\n',
     );
 
     const run = await runCli(['-c', config, 'provide'], (axios) =>
-      axios.post.mockResolvedValue(warned('retire warning', JSON.stringify({ trunk_pins_closed: 0, contracts_released: 0 })))
+      axios.post.mockResolvedValue(
+        warned('retire warning', JSON.stringify({ trunk_pins_closed: 0, contracts_released: 0 })),
+      ),
     );
 
     expect(run.exitCode).toBeUndefined();
@@ -1687,7 +1770,7 @@ describe('Sanshain-Warning', () => {
       const config = writeProject(requireYaml(ONE));
 
       const run = await runCli(['-c', config, '--tag', 'R9', 'require'], (axios) =>
-        axios.get.mockResolvedValue(warned(NO_BRANCH, Buffer.from('paths: {}') as any, 200))
+        axios.get.mockResolvedValue(warned(NO_BRANCH, Buffer.from('paths: {}'), 200)),
       );
 
       expect(run.exitCode).toBeUndefined();
@@ -1699,7 +1782,7 @@ describe('Sanshain-Warning', () => {
       const config = writeProject(requireYaml(TWO, 'strict: true\nbestEffort: true\n'));
 
       const run = await runCli(['-c', config, '--tag', 'R9', 'require'], (axios) =>
-        axios.post.mockResolvedValue(warned(NO_BRANCH, Buffer.from('paths: {}') as any, 200))
+        axios.post.mockResolvedValue(warned(NO_BRANCH, Buffer.from('paths: {}'), 200)),
       );
 
       expect(run.exitCode).toBe(1);
@@ -1713,12 +1796,12 @@ describe('Sanshain-Warning', () => {
       const config = writeProject(PROVIDE_YAML, SPEC);
 
       const run = await runCli(['-c', config, '--trunk', '--tag', 'R1', 'provide'], (axios) =>
-        axios.post.mockResolvedValue({ status: 202, data: PROVIDE_OK, headers: {} })
+        axios.post.mockResolvedValue({ status: 202, data: PROVIDE_OK, headers: {} }),
       );
 
       expect(run.exitCode).toBeUndefined();
       expect(run.err).toContain(`⚠ ${BOTH}`);
-      const sent = run.axios.post.mock.calls[0][1];
+      const sent = nthCall(run.axios.post, 0)[1];
       expect(sent).not.toHaveProperty('trunk');
       expect(sent).not.toHaveProperty('tag');
     });
@@ -1729,12 +1812,12 @@ describe('Sanshain-Warning', () => {
       process.env.SANSHAIN_TAG = 'R1';
 
       const run = await runCli(['-c', config, 'provide'], (axios) =>
-        axios.post.mockResolvedValue({ status: 202, data: PROVIDE_OK, headers: {} })
+        axios.post.mockResolvedValue({ status: 202, data: PROVIDE_OK, headers: {} }),
       );
 
       expect(run.exitCode).toBeUndefined();
       expect(run.err).toContain(`⚠ ${BOTH}`);
-      expect(run.axios.post.mock.calls[0][1]).not.toHaveProperty('trunk');
+      expect(nthCall(run.axios.post, 0)[1]).not.toHaveProperty('trunk');
     });
 
     it('under strict fails before any request, even with best-effort', async () => {
@@ -1755,7 +1838,7 @@ describe('Sanshain-Warning', () => {
     const notRecorded = (headers: Record<string, unknown> = {}) => ({
       status: 200,
       data: JSON.stringify({ system: 'orders-service', trunk: false, resources: [], recorded: false }),
-      headers
+      headers,
     });
     const REASON = "no Component named 'orders-service'";
 
@@ -1763,7 +1846,7 @@ describe('Sanshain-Warning', () => {
       const config = writeProject(CATALOG_YAML, FILES);
 
       const run = await runCli(['-c', config, 'catalog'], (axios) =>
-        axios.put.mockResolvedValue(notRecorded({ 'sanshain-warning': REASON }))
+        axios.put.mockResolvedValue(notRecorded({ 'sanshain-warning': REASON })),
       );
 
       expect(run.exitCode).toBeUndefined();
@@ -1784,7 +1867,7 @@ describe('Sanshain-Warning', () => {
       const config = writeProject(`${CATALOG_YAML}strict: true\n`, FILES);
 
       const run = await runCli(['-c', config, 'catalog'], (axios) =>
-        axios.put.mockResolvedValue(notRecorded({ 'sanshain-warning': REASON }))
+        axios.put.mockResolvedValue(notRecorded({ 'sanshain-warning': REASON })),
       );
 
       expect(run.exitCode).toBe(1);
@@ -1798,8 +1881,8 @@ describe('Sanshain-Warning', () => {
         axios.put.mockResolvedValue({
           status: 200,
           data: JSON.stringify({ system: 'orders-service', trunk: false, resources: ['resource:default/db'] }),
-          headers: {}
-        })
+          headers: {},
+        }),
       );
 
       expect(run.exitCode).toBeUndefined();

@@ -77,7 +77,7 @@ export function envFlag(name: string): boolean {
  * There is no git or branch detection: CI declares trunk and tag on its
  * protected pipelines, so only those builds become GA through autoGa.
  */
-export function resolveStability(gaFlag?: boolean, autoGa: boolean = false, streamIsDeclared: boolean = false): Stability {
+export function resolveStability(gaFlag?: boolean, autoGa = false, streamIsDeclared = false): Stability {
   if (gaFlag) {
     return 'ga';
   }
@@ -174,7 +174,7 @@ export function parseSet(arg: string): [string, string] {
 export function fillAnnotations(
   declared: Annotation[] | undefined,
   sets: ReadonlyMap<string, string> = new Map(),
-  env: NodeJS.ProcessEnv = process.env
+  env: NodeJS.ProcessEnv = process.env,
 ): { annotations: Annotation[]; warnings: string[] } {
   const annotations: Annotation[] = [];
   const warnings: string[] = [];
@@ -182,13 +182,13 @@ export function fillAnnotations(
     let missing: string | undefined;
     const value = entry.value.replace(PLACEHOLDER, (_match, name: string) => {
       const flag = sets.get(name);
-      const found = flag !== undefined ? flag : (env[SET_ENV_PREFIX + name] ?? '');
+      const found = flag ?? env[SET_ENV_PREFIX + name] ?? '';
       if (found === '' && missing === undefined) missing = name;
       return found;
     });
     if (missing !== undefined) {
       warnings.push(
-        `annotation '${entry.name}' left out: {{${missing}}} is not set (--set ${missing}=… or ${SET_ENV_PREFIX}${missing})`
+        `annotation '${entry.name}' left out: {{${missing}}} is not set (--set ${missing}=… or ${SET_ENV_PREFIX}${missing})`,
       );
       continue;
     }
@@ -218,8 +218,9 @@ export function resolveStreamWithWarning(trunkFlag?: boolean, tagFlag?: string):
 /** Trunk and the tag as this build declares them, the flags before SANSHAIN_TRUNK / SANSHAIN_TAG. */
 function declaredStream(trunkFlag?: boolean, tagFlag?: string): { trunk: boolean; tag?: string } {
   const trunk = Boolean(trunkFlag) || envFlag('SANSHAIN_TRUNK');
-  const tag = (tagFlag || process.env.SANSHAIN_TAG || '').trim() || undefined;
-  return { trunk, tag };
+  // An empty flag counts as none, and so does a blank tag.
+  const tag = (tagFlag === undefined || tagFlag === '' ? (process.env.SANSHAIN_TAG ?? '') : tagFlag).trim();
+  return tag === '' ? { trunk } : { trunk, tag };
 }
 
 /**
@@ -242,7 +243,7 @@ export function resolveStream(trunkFlag?: boolean, tagFlag?: string): Stream {
  * holding the config file, never the working directory — so a build pointed at
  * another config via --config finds the same files as one started next to it.
  */
-export function configBaseDir(configPath: string = 'sanshain.yaml'): string {
+export function configBaseDir(configPath = 'sanshain.yaml'): string {
   return path.dirname(path.resolve(process.cwd(), configPath));
 }
 
@@ -254,7 +255,7 @@ export function configBaseDir(configPath: string = 'sanshain.yaml'): string {
  * SANSHAIN_STRICT still counts. Unknown fields rejected by strict in a file
  * that otherwise validates throw UnknownFieldsError, which nothing softens.
  */
-export function loadConfig(configPath: string = 'sanshain.yaml', bestEffort: boolean = false): SanshainConfig {
+export function loadConfig(configPath = 'sanshain.yaml', bestEffort = false): SanshainConfig {
   const fullPath = path.resolve(process.cwd(), configPath);
   if (!fs.existsSync(fullPath)) {
     throw new Error(`Configuration file not found: ${fullPath}`);
@@ -263,7 +264,7 @@ export function loadConfig(configPath: string = 'sanshain.yaml', bestEffort: boo
   const fileContents = fs.readFileSync(fullPath, 'utf8');
   // js-yaml 5 reads YAML 1.2 without merge keys; `<<` is added back so a
   // sanshain.yaml that shares settings through anchors keeps working.
-  const config = load(fileContents, { schema: CORE_SCHEMA.withTags(mergeTag) }) as SanshainConfig;
+  const config = load(fileContents, { schema: CORE_SCHEMA.withTags(mergeTag) });
   if (!isObject(config)) {
     throw new Error(`${fullPath} must be a mapping of settings, such as sanshainUrl: <url>`);
   }
@@ -285,7 +286,8 @@ export function loadConfig(configPath: string = 'sanshain.yaml', bestEffort: boo
   reportUnknownFields(config, strict);
   if (broken) throw invalid;
 
-  return config;
+  // Validated above: the mapping has the fields of a SanshainConfig.
+  return config as unknown as SanshainConfig;
 }
 
 /** Strict mode refuses a sanshain.yaml with unknown fields; best-effort does not soften it. */
@@ -299,8 +301,21 @@ export class UnknownFieldsError extends Error {
 // Every field any Sanshain client knows. A field another client supports but
 // this one does not is still known: one sanshain.yaml serves every client.
 const KNOWN_TOP = new Set([
-  'sanshainUrl', 'serviceName', 'clientName', 'compression', 'bestEffort', 'strict', 'force',
-  'insecure', 'combine', 'catalogInfo', 'autoGa', 'annotations', 'provide', 'provides', 'requires'
+  'sanshainUrl',
+  'serviceName',
+  'clientName',
+  'compression',
+  'bestEffort',
+  'strict',
+  'force',
+  'insecure',
+  'combine',
+  'catalogInfo',
+  'autoGa',
+  'annotations',
+  'provide',
+  'provides',
+  'requires',
 ]);
 const KNOWN_PROVIDE = new Set(['file', 'apiType', 'retired', 'openApiFile', 'asyncApiFile', 'protoFile', 'combine']);
 const KNOWN_REQUIRE = new Set(['serviceName', 'apiType', 'version', 'outputDirectory', 'endpoints', 'format']);
@@ -311,34 +326,58 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+/** An entry of a list in sanshain.yaml as a mapping; one that is none has no field at all. */
+function entryOf(value: unknown): Record<string, unknown> {
+  return isObject(value) ? value : {};
+}
+
+/** A value of sanshain.yaml as text, the way a message names it. */
+function shown(value: unknown): string {
+  return String(value);
+}
+
+/** `name[index]`, the way an entry of a list is named in a message. */
+function at(name: string, index: number): string {
+  return `${name}[${String(index)}]`;
+}
+
 /** The paths of all unknown fields, in file order (js-yaml keeps key order). */
 export function findUnknownFields(config: unknown): string[] {
   const unknown: string[] = [];
-  const scan = (node: unknown, known: Set<string>, prefix: string, nested?: (key: string, value: unknown, at: string) => void) => {
+  const scan = (
+    node: unknown,
+    known: Set<string>,
+    prefix: string,
+    nested?: (key: string, value: unknown, where: string) => void,
+  ) => {
     if (!isObject(node)) return;
     for (const [key, value] of Object.entries(node)) {
-      const at = prefix ? `${prefix}.${key}` : key;
+      const where = prefix ? `${prefix}.${key}` : key;
       if (!known.has(key)) {
-        unknown.push(at);
+        unknown.push(where);
       } else if (nested) {
-        nested(key, value, at);
+        nested(key, value, where);
       }
     }
   };
-  scan(config, KNOWN_TOP, '', (key, value, at) => {
+  scan(config, KNOWN_TOP, '', (key, value, where) => {
     if (key === 'provide') {
-      scan(value, KNOWN_PROVIDE, at);
+      scan(value, KNOWN_PROVIDE, where);
     } else if (key === 'annotations' && Array.isArray(value)) {
-      value.forEach((entry, i) => scan(entry, KNOWN_ANNOTATION, `${at}[${i}]`));
+      value.forEach((entry: unknown, i) => {
+        scan(entry, KNOWN_ANNOTATION, at(where, i));
+      });
     } else if ((key === 'provides' || key === 'requires') && Array.isArray(value)) {
-      value.forEach((entry, i) => {
-        const entryAt = `${at}[${i}]`;
+      value.forEach((entry: unknown, i) => {
+        const entryAt = at(where, i);
         if (key === 'provides') {
           scan(entry, KNOWN_PROVIDE, entryAt);
         } else {
           scan(entry, KNOWN_REQUIRE, entryAt, (reqKey, reqValue, reqAt) => {
             if (reqKey === 'endpoints' && Array.isArray(reqValue)) {
-              reqValue.forEach((endpoint, j) => scan(endpoint, KNOWN_ENDPOINT, `${reqAt}[${j}]`));
+              reqValue.forEach((endpoint: unknown, j) => {
+                scan(endpoint, KNOWN_ENDPOINT, at(reqAt, j));
+              });
             }
           });
         }
@@ -360,7 +399,7 @@ export function puzzledCat(line: string): string {
   return ['   /\\_/\\  ?', `  ( O_o )   ${line}`, ' ---U-U---'].join('\n');
 }
 
-function reportUnknownFields(config: SanshainConfig, strict: boolean): void {
+function reportUnknownFields(config: unknown, strict: boolean): void {
   const fields = findUnknownFields(config);
   if (fields.length === 0) return;
   const line = unknownFieldsLine(fields, strict);
@@ -370,7 +409,7 @@ function reportUnknownFields(config: SanshainConfig, strict: boolean): void {
   }
 }
 
-function applyEnvOverrides(config: SanshainConfig): void {
+function applyEnvOverrides(config: Record<string, unknown>): void {
   if (process.env.SANSHAIN_URL) {
     config.sanshainUrl = process.env.SANSHAIN_URL;
   }
@@ -400,8 +439,7 @@ function applyEnvOverrides(config: SanshainConfig): void {
 // disagree with it about what 'v2.1' means.
 const PINNABLE_VERSION = /^v?\d+(\.\d+){0,2}$/;
 
-const BRANCH_HINT =
-  "'branch' is no longer supported — the branch model was removed in Sanshain 2.0";
+const BRANCH_HINT = "'branch' is no longer supported — the branch model was removed in Sanshain 2.0";
 const TIMEOUT_HINT =
   "'timeout' is no longer supported — Sanshain 2.0 resolves immediately (no long-polling); remove it";
 const BASE_VERSION_HINT =
@@ -410,8 +448,7 @@ const RELEASE_BRANCHES_HINT =
   "'releaseBranches' is no longer supported — stability is 'snapshot' by default; pass --ga or set SANSHAIN_GA=true for GA builds, or set autoGa: true to make trunk and tag builds GA";
 
 /** Branch-era fields are hard errors, by name, before any other check. */
-function rejectLegacyFields(config: any): void {
-  if (!isObject(config)) return;
+function rejectLegacyFields(config: Record<string, unknown>): void {
   if ('releaseBranches' in config) {
     throw new Error(RELEASE_BRANCHES_HINT);
   }
@@ -424,26 +461,32 @@ function rejectLegacyFields(config: any): void {
 
   const rejectInProvide = (p: unknown, index?: number) => {
     if (!isObject(p)) return;
-    const context = index !== undefined ? `provides[${index}]` : 'provide';
+    const context = index !== undefined ? at('provides', index) : 'provide';
     if ('branch' in p) {
-      throw new Error(`${context}: ${BRANCH_HINT}; remove it — the version is read from the spec file (info.version, or the '// sanshain-version:' comment for proto)`);
+      throw new Error(
+        `${context}: ${BRANCH_HINT}; remove it — the version is read from the spec file (info.version, or the '// sanshain-version:' comment for proto)`,
+      );
     }
     if ('baseVersion' in p) {
       throw new Error(`${context}: ${BASE_VERSION_HINT}`);
     }
     if ('stability' in p) {
-      throw new Error(`${context}: 'stability' does not belong in sanshain.yaml — the default is 'snapshot'; pass --ga or set SANSHAIN_GA=true for GA builds`);
+      throw new Error(
+        `${context}: 'stability' does not belong in sanshain.yaml — the default is 'snapshot'; pass --ga or set SANSHAIN_GA=true for GA builds`,
+      );
     }
   };
   rejectInProvide(config.provide);
   if (Array.isArray(config.provides)) {
-    config.provides.forEach((p, index) => rejectInProvide(p, index));
+    config.provides.forEach((p: unknown, index) => {
+      rejectInProvide(p, index);
+    });
   }
 
   if (Array.isArray(config.requires)) {
-    config.requires.forEach((req, index) => {
+    config.requires.forEach((req: unknown, index) => {
       if (!isObject(req)) return;
-      const context = req.serviceName ? `requires[${index}] (${req.serviceName})` : `requires[${index}]`;
+      const context = req.serviceName ? `${at('requires', index)} (${shown(req.serviceName)})` : at('requires', index);
       if ('branch' in req) {
         throw new Error(`${context}: ${BRANCH_HINT}; replace with an exact 'version' pin`);
       }
@@ -458,10 +501,10 @@ function rejectLegacyFields(config: any): void {
 const API_TYPES: unknown[] = ['openapi', 'asyncapi', 'proto', 'grpc'];
 
 function unsupportedApiType(apiType: unknown): string {
-  return `unsupported apiType '${apiType}' — use openapi, asyncapi or proto (grpc means proto)`;
+  return `unsupported apiType '${shown(apiType)}' — use openapi, asyncapi or proto (grpc means proto)`;
 }
 
-function validateConfig(config: any): void {
+function validateConfig(config: Record<string, unknown>): void {
   if (!config.sanshainUrl) {
     throw new Error('Missing required field: sanshainUrl');
   }
@@ -469,8 +512,9 @@ function validateConfig(config: any): void {
     config.serviceName = config.clientName;
   }
 
-  const validateProvide = (p: any, index?: number) => {
-    const context = index !== undefined ? `provides[${index}]` : 'provide';
+  const validateProvide = (value: unknown, index?: number) => {
+    const p = entryOf(value);
+    const context = index !== undefined ? at('provides', index) : 'provide';
     if (p.apiType !== undefined && !API_TYPES.includes(p.apiType)) {
       throw new Error(`${context}: ${unsupportedApiType(p.apiType)}`);
     }
@@ -492,7 +536,9 @@ function validateConfig(config: any): void {
     if (!Array.isArray(config.provides)) {
       throw new Error('Field provides must be an array');
     }
-    config.provides.forEach((p: any, index: number) => validateProvide(p, index));
+    config.provides.forEach((p: unknown, index) => {
+      validateProvide(p, index);
+    });
   }
 
   validateAnnotations(config.annotations);
@@ -501,43 +547,48 @@ function validateConfig(config: any): void {
     if (!Array.isArray(config.requires)) {
       throw new Error('Field requires must be an array');
     }
-    config.requires.forEach((req: any, index: number) => {
+    config.requires.forEach((value: unknown, index) => {
+      const req = entryOf(value);
+      const entry = at('requires', index);
       if (!req.serviceName) {
-        throw new Error(`Missing serviceName in requires[${index}]`);
+        throw new Error(`Missing serviceName in ${entry}`);
       }
-      const context = `requires[${index}] (${req.serviceName})`;
+      const serviceName = shown(req.serviceName);
+      const context = `${entry} (${serviceName})`;
       if (req.apiType !== undefined && !API_TYPES.includes(req.apiType)) {
         throw new Error(`${context}: ${unsupportedApiType(req.apiType)}`);
       }
       if (req.format !== undefined && (req.format !== 'openapi' || req.apiType !== 'asyncapi')) {
         throw new Error(
-          `${context}: format '${req.format}' with apiType '${req.apiType ?? 'openapi'}' is not supported — ` +
-            "the only combination is 'format: openapi' with 'apiType: asyncapi'"
+          `${context}: format '${shown(req.format)}' with apiType '${shown(req.apiType ?? 'openapi')}' is not supported — ` +
+            "the only combination is 'format: openapi' with 'apiType: asyncapi'",
         );
       }
       if (req.version === undefined || req.version === null || req.version === '') {
         throw new Error(
-          `${context}: missing 'version' — Sanshain 2.0 pins exact versions; add e.g. version: 1.2.0 (list available: GET /producers/${req.serviceName}/versions)`
+          `${context}: missing 'version' — Sanshain 2.0 pins exact versions; add e.g. version: 1.2.0 (list available: GET /producers/${serviceName}/versions)`,
         );
       }
-      req.version = String(req.version);
-      if (!PINNABLE_VERSION.test(req.version)) {
+      const version = shown(req.version);
+      req.version = version;
+      if (!PINNABLE_VERSION.test(version)) {
         throw new Error(
-          `${context}: version '${req.version}' is not a version — pin MAJOR[.MINOR[.PATCH]], optionally v-prefixed (no ranges, no 'latest')`
+          `${context}: version '${version}' is not a version — pin MAJOR[.MINOR[.PATCH]], optionally v-prefixed (no ranges, no 'latest')`,
         );
       }
       if (!req.outputDirectory) {
-        throw new Error(`Missing outputDirectory in requires[${index}]`);
+        throw new Error(`Missing outputDirectory in ${entry}`);
       }
       if (!req.endpoints || !Array.isArray(req.endpoints) || req.endpoints.length === 0) {
-        throw new Error(`Missing or empty endpoints in requires[${index}]`);
+        throw new Error(`Missing or empty endpoints in ${entry}`);
       }
-      req.endpoints.forEach((endpoint: any, endpointIndex: number) => {
+      req.endpoints.forEach((endpointValue: unknown, endpointIndex) => {
+        const endpoint = entryOf(endpointValue);
         if (!endpoint.method) {
-          throw new Error(`Missing method in requires[${index}].endpoints[${endpointIndex}]`);
+          throw new Error(`Missing method in ${at(`${entry}.endpoints`, endpointIndex)}`);
         }
         if (!endpoint.path) {
-          throw new Error(`Missing path in requires[${index}].endpoints[${endpointIndex}]`);
+          throw new Error(`Missing path in ${at(`${entry}.endpoints`, endpointIndex)}`);
         }
       });
     });
@@ -555,11 +606,12 @@ function validateAnnotations(annotations: unknown): void {
   if (!Array.isArray(annotations)) {
     throw new Error('Field annotations must be an array of entries with scope, name and value');
   }
-  annotations.forEach((entry: unknown, index: number) => {
+  annotations.forEach((entry: unknown, index) => {
+    const where = at('annotations', index);
     if (!isObject(entry)) {
-      throw new Error(`annotations[${index}]: must be an entry with scope, name and value`);
+      throw new Error(`${where}: must be an entry with scope, name and value`);
     }
-    const context = typeof entry.name === 'string' ? `annotations[${index}] (${entry.name})` : `annotations[${index}]`;
+    const context = typeof entry.name === 'string' ? `${where} (${entry.name})` : where;
     for (const field of KNOWN_ANNOTATION) {
       if (entry[field] === undefined || entry[field] === null) {
         throw new Error(`${context}: missing '${field}'`);
@@ -569,7 +621,7 @@ function validateAnnotations(annotations: unknown): void {
       }
     }
     if (entry.scope !== 'version' && entry.scope !== 'system') {
-      throw new Error(`${context}: scope '${entry.scope}' is not supported — use version or system`);
+      throw new Error(`${context}: scope '${shown(entry.scope)}' is not supported — use version or system`);
     }
   });
 }

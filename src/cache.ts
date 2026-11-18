@@ -20,7 +20,8 @@ export class SanshainCache {
   private state: CacheState;
 
   constructor(cacheDir?: string) {
-    const dir = cacheDir || DEFAULT_CACHE_DIR;
+    // An empty name means the default, as no name does.
+    const dir = cacheDir === undefined || cacheDir === '' ? DEFAULT_CACHE_DIR : cacheDir;
     this.cacheFile = path.join(dir, CACHE_FILE);
     this.state = this.load();
   }
@@ -28,7 +29,7 @@ export class SanshainCache {
   private load(): CacheState {
     try {
       if (fs.existsSync(this.cacheFile)) {
-        const data = JSON.parse(fs.readFileSync(this.cacheFile, 'utf8'));
+        const data = JSON.parse(fs.readFileSync(this.cacheFile, 'utf8')) as Partial<CacheState> | null;
         return { ...data, requires: data?.requires ?? {} };
       }
     } catch {
@@ -52,7 +53,7 @@ export class SanshainCache {
   updateRequireEntry(key: string, etag: string): void {
     this.state.requires[key] = {
       etag,
-      last_fetched: new Date().toISOString()
+      last_fetched: new Date().toISOString(),
     };
   }
 
@@ -65,7 +66,7 @@ export class SanshainCache {
     method: string,
     apiPath: string,
     format?: string,
-    outputDirectory?: string
+    outputDirectory?: string,
   ): string {
     return `${serviceName}|${version}|${method}|${apiPath}${format ? `|${format}` : ''}${outputSuffix(outputDirectory)}`;
   }

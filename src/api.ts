@@ -1,4 +1,5 @@
 import axios, { AxiosInstance, AxiosResponse } from 'axios';
+import https from 'https';
 import { load } from 'js-yaml';
 import { compress, decompress, displayUrl, normalizeLineEndings, parseServerJson, printable, sanitize } from './utils';
 
@@ -40,14 +41,40 @@ export interface Origin {
 
 const ORIGIN_FIELDS = ['build_url', 'change_url', 'tickets', 'note'] as const;
 
-function hasOrigin(payload: any): boolean {
-  return ORIGIN_FIELDS.some((field) => payload && field in payload);
+/** What every provide payload has in common, whatever document it carries. */
+type ProvideDraft = Origin & { annotations?: Annotation[] } & Record<string, unknown>;
+
+function hasOrigin(payload: ProvideDraft): boolean {
+  return ORIGIN_FIELDS.some((name) => name in payload);
 }
 
-function withoutOrigin(payload: any): any {
-  const copy = { ...payload };
-  for (const field of ORIGIN_FIELDS) delete copy[field];
-  return copy;
+function withoutOrigin(payload: ProvideDraft): ProvideDraft {
+  const origin: readonly string[] = ORIGIN_FIELDS;
+  return Object.fromEntries(Object.entries(payload).filter(([name]) => !origin.includes(name)));
+}
+
+/** `value || fallback` for text: an empty text counts as none. */
+function textOr(value: string | undefined, fallback: string): string {
+  return value === undefined || value === '' ? fallback : value;
+}
+
+/** `value?.[key]` for a value of unknown shape: undefined when there is nothing to read from. */
+function field(value: unknown, key: string): unknown {
+  return value === undefined || value === null ? undefined : (value as Record<string, unknown>)[key];
+}
+
+/** The answer an HTTP failure carries. */
+interface FailedResponse {
+  status?: number;
+  data?: unknown;
+  headers?: unknown;
+}
+
+/** The answer of the service inside a failed call; undefined when the call got none. */
+function failedResponse(error: unknown): FailedResponse | undefined {
+  const response = field(error, 'response');
+  if (!response) return undefined;
+  return response;
 }
 
 /** An error response body as text, whatever form the HTTP layer handed it over in. */
@@ -74,7 +101,8 @@ export interface Annotation {
 }
 
 /** Printed once per client when an older service refused the annotations and the call was repeated without them. */
-export const ANNOTATIONS_DROPPED_WARNING = 'Sanshain Service before 2.13.0 does not take annotations; sending without them';
+export const ANNOTATIONS_DROPPED_WARNING =
+  'Sanshain Service before 2.13.0 does not take annotations; sending without them';
 
 /**
  * Whether a refusal names annotations as the unknown field (a service before
@@ -218,7 +246,7 @@ export class VersionConflictError extends Error {
   constructor(message: string, proposedVersion?: string) {
     super(message);
     this.name = 'VersionConflictError';
-    this.proposedVersion = proposedVersion;
+    if (proposedVersion !== undefined) this.proposedVersion = proposedVersion;
   }
 }
 
@@ -266,12 +294,13 @@ export interface CatalogPushResponse {
  * contain a comma, so the separate lines are read from the raw response when
  * it is there; a joined value is never split.
  */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- the parameter type is public API: any response object is taken
 export function warningsOf(response: any): string[] {
-  const distinct = response?.request?.res?.headersDistinct?.['sanshain-warning'];
-  if (Array.isArray(distinct)) return distinct.map((v) => printable(String(v)));
-  const value = response?.headers?.['sanshain-warning'];
+  const distinct = field(field(field(field(response, 'request'), 'res'), 'headersDistinct'), 'sanshain-warning');
+  if (Array.isArray(distinct)) return (distinct as unknown[]).map((v) => printable(String(v)));
+  const value = field(field(response, 'headers'), 'sanshain-warning');
   if (value === undefined || value === null) return [];
-  return (Array.isArray(value) ? value : [value]).map((v) => printable(String(v)));
+  return (Array.isArray(value) ? (value as unknown[]) : [value]).map((v) => printable(String(v)));
 }
 
 /** The text of the service's 403 when the caller lacks the releaser role. */
@@ -284,8 +313,11 @@ interface ErrorBody {
 
 /** Whether a server version string is older than MAJOR.MINOR. */
 function versionBelow(version: string, major: number, minor: number): boolean {
-  const [maj, min = 0] = version.replace(/^v/, '').split('.').map((part) => Number.parseInt(part, 10));
-  if (Number.isNaN(maj)) return false;
+  const [maj, min = 0] = version
+    .replace(/^v/, '')
+    .split('.')
+    .map((part) => Number.parseInt(part, 10));
+  if (maj === undefined || Number.isNaN(maj)) return false;
   return maj < major || (maj === major && (Number.isNaN(min) ? 0 : min) < minor);
 }
 
@@ -300,18 +332,18 @@ export class SanshainClient {
   /** Set once the service refused annotations: later calls send none. */
   private annotationsRefused = false;
 
-  constructor(baseUrl: string, token?: string, insecure: boolean = false) {
-    this.token = token;
+  constructor(baseUrl: string, token?: string, insecure = false) {
+    if (token !== undefined) this.token = token;
     this.baseUrl = baseUrl;
     this.axiosInstance = axios.create({
       baseURL: baseUrl,
       validateStatus: (status) => status >= 200 && status < 300,
-      responseType: 'arraybuffer'
+      responseType: 'arraybuffer',
     });
 
     if (this.token) {
       this.axiosInstance.interceptors.request.use((config) => {
-        config.headers['Authorization'] = `Bearer ${this.token}`;
+        config.headers.Authorization = `Bearer ${this.token ?? ''}`;
         return config;
       });
     }
@@ -320,9 +352,8 @@ export class SanshainClient {
     if (insecure) {
       // For Node.js, this typically means process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'
       // but that's global. A better way would be using a custom httpsAgent.
-      const https = require('https');
       this.axiosInstance.defaults.httpsAgent = new https.Agent({
-        rejectUnauthorized: false
+        rejectUnauthorized: false,
       });
     }
   }
@@ -339,7 +370,7 @@ export class SanshainClient {
     return taken;
   }
 
-  private collectWarnings(response: any): void {
+  private collectWarnings(response: unknown): void {
     this.warnings.push(...warningsOf(response));
   }
 
@@ -366,8 +397,9 @@ export class SanshainClient {
    * the first refusal prints the warning, a plain log line strict mode does
    * not fail on (like the origin fallback).
    */
-  private refusedAnnotations(sent: Annotation[] | undefined, error: any, status: number): boolean {
-    if (!sent?.length || error?.response?.status !== status || !namesAnnotationsField(error.response.data)) {
+  private refusedAnnotations(sent: Annotation[] | undefined, error: unknown, status: number): boolean {
+    const response = failedResponse(error);
+    if (!sent?.length || response?.status !== status || !namesAnnotationsField(response.data)) {
       return false;
     }
     if (!this.annotationsRefused) {
@@ -377,31 +409,31 @@ export class SanshainClient {
     return true;
   }
 
-  private async decodeBody(response: { data: any; headers?: any }): Promise<string> {
-    let body = response.data;
-    if (response.headers?.['content-encoding'] === 'gzip' && (body instanceof Buffer || body instanceof Uint8Array)) {
-      try {
-        body = (await decompress(Buffer.from(body))).toString('utf8');
-      } catch {
-        body = Buffer.from(body).toString('utf8');
+  private async decodeBody(response: { data?: unknown; headers?: unknown }): Promise<string> {
+    const body = response.data;
+    if (body instanceof Buffer || body instanceof Uint8Array) {
+      if (field(response.headers, 'content-encoding') === 'gzip') {
+        try {
+          return (await decompress(Buffer.from(body))).toString('utf8');
+        } catch {
+          return Buffer.from(body).toString('utf8');
+        }
       }
-    } else if (body instanceof Buffer || body instanceof Uint8Array) {
-      body = Buffer.from(body).toString('utf8');
-    } else if (typeof body !== 'string') {
-      try {
-        body = JSON.stringify(body);
-      } catch {
-        body = String(body);
-      }
+      return Buffer.from(body).toString('utf8');
     }
-    return body;
+    if (typeof body === 'string') return body;
+    try {
+      return JSON.stringify(body);
+    } catch {
+      return String(body);
+    }
   }
 
   private parseErrorBody(body: string): ErrorBody {
     try {
-      const parsed = parseServerJson(body);
+      const parsed: unknown = parseServerJson(body);
       if (parsed && typeof parsed === 'object') {
-        return parsed as ErrorBody;
+        return parsed;
       }
     } catch {
       // not JSON
@@ -421,16 +453,15 @@ export class SanshainClient {
     }
     this.serverVersionChecked = true;
     try {
-      const response = await this.axiosInstance.get('/version', {
+      const response = await this.axiosInstance.get<unknown>('/version', {
         responseType: 'arraybuffer',
-        validateStatus: (status) => status === 200
+        validateStatus: (status) => status === 200,
       });
       const body = await this.decodeBody(response);
-      const parsed = parseServerJson(body);
-      const serverVersion: string | undefined = parsed?.version;
-      if (serverVersion) {
+      const serverVersion = field(parseServerJson(body), 'version');
+      if (typeof serverVersion === 'string' && serverVersion) {
         this.serverVersion = serverVersion;
-        const major = Number.parseInt(serverVersion.split('.')[0], 10);
+        const major = Number.parseInt(serverVersion.split('.')[0] ?? '', 10);
         if (!Number.isNaN(major) && major < 2) {
           this.oldServerMessage = `Sanshain server at ${displayUrl(this.baseUrl)} is ${serverVersion}; this client requires Sanshain 2.x — upgrade the server.`;
         }
@@ -441,13 +472,15 @@ export class SanshainClient {
     return this.oldServerMessage;
   }
 
-  private async translateError(error: any): Promise<Error> {
-    if (!error.response) {
-      return error;
+  private async translateError(error: unknown): Promise<Error> {
+    const response = failedResponse(error);
+    if (!response) {
+      // No answer of the service: the failure is handed back as it came.
+      return error as Error;
     }
 
-    const status: number = error.response.status;
-    const bodyText = await this.decodeBody(error.response);
+    const status = response.status;
+    const bodyText = await this.decodeBody(response);
     const errorBody = this.parseErrorBody(bodyText);
 
     const oldServer = await this.diagnoseOldServer();
@@ -455,19 +488,19 @@ export class SanshainClient {
       return new Error(oldServer);
     }
 
-    const serverMessage = errorBody.error || sanitize(bodyText);
+    const serverMessage = textOr(errorBody.error, sanitize(bodyText));
 
     if (status === 409) {
       return new VersionConflictError(serverMessage, errorBody.proposed_version);
     }
     if (status === 404) {
       return new UnknownVersionError(
-        `Unknown producer or version (404): ${serverMessage} — check the pinned version in sanshain.yaml.`
+        `Unknown producer or version (404): ${serverMessage} — check the pinned version in sanshain.yaml.`,
       );
     }
     if (status === 410) {
       return new AbsentEndpointError(
-        `Absent endpoint (410): ${serverMessage} — the pinned version exists but deliberately does not include the requested endpoint(s).`
+        `Absent endpoint (410): ${serverMessage} — the pinned version exists but deliberately does not include the requested endpoint(s).`,
       );
     }
     // Only the refusal for want of the role gets the hint: both service
@@ -481,25 +514,37 @@ export class SanshainClient {
           "Publishing GA requires the 'releaser' role; retiring requires it too, or a maintainer " +
           'grant on the Producer. Grant the role to the user or token this build authenticates as ' +
           '(administrators and root always hold it), or publish as a snapshot by leaving ' +
-          '--ga / SANSHAIN_GA unset and autoGa off (or setting SANSHAIN_GA=false).'
+          '--ga / SANSHAIN_GA unset and autoGa off (or setting SANSHAIN_GA=false).',
       );
     }
     if (status === 403) {
       return new Error(`Refused (403): ${serverMessage}`);
     }
-    return new Error(`Request failed with status ${status}: ${sanitize(bodyText)}`);
+    return new Error(`Request failed with status ${String(status)}: ${sanitize(bodyText)}`);
   }
 
-  async provide(payload: ProvidePayload, compression: boolean = false): Promise<ProvideResponseBody | null> {
-    return this.postProvide('/provide', { ...payload, openapi_yaml: normalizeLineEndings(payload.openapi_yaml) }, compression);
+  async provide(payload: ProvidePayload, compression = false): Promise<ProvideResponseBody | null> {
+    return this.postProvide(
+      '/provide',
+      { ...payload, openapi_yaml: normalizeLineEndings(payload.openapi_yaml) },
+      compression,
+    );
   }
 
-  async provideAsyncApi(payload: ProvideAsyncApiPayload, compression: boolean = false): Promise<ProvideResponseBody | null> {
-    return this.postProvide('/provide/asyncapi', { ...payload, asyncapi_yaml: normalizeLineEndings(payload.asyncapi_yaml) }, compression);
+  async provideAsyncApi(payload: ProvideAsyncApiPayload, compression = false): Promise<ProvideResponseBody | null> {
+    return this.postProvide(
+      '/provide/asyncapi',
+      { ...payload, asyncapi_yaml: normalizeLineEndings(payload.asyncapi_yaml) },
+      compression,
+    );
   }
 
-  async provideProto(payload: ProvideProtoPayload, compression: boolean = false): Promise<ProvideResponseBody | null> {
-    return this.postProvide('/provide/grpc', { ...payload, proto_content: normalizeLineEndings(payload.proto_content) }, compression);
+  async provideProto(payload: ProvideProtoPayload, compression = false): Promise<ProvideResponseBody | null> {
+    return this.postProvide(
+      '/provide/grpc',
+      { ...payload, proto_content: normalizeLineEndings(payload.proto_content) },
+      compression,
+    );
   }
 
   /**
@@ -520,14 +565,14 @@ export class SanshainClient {
     const payload: Record<string, unknown> = { producername, retired: true };
     if (dryRun) payload.dry_run = true;
 
-    let response: AxiosResponse;
+    let response: AxiosResponse<unknown>;
     try {
-      response = await this.axiosInstance.post(url, payload, {
-        headers: { 'Content-Type': 'application/json' }
+      response = await this.axiosInstance.post<unknown>(url, payload, {
+        headers: { 'Content-Type': 'application/json' },
       });
       this.collectWarnings(response);
-    } catch (error: any) {
-      this.collectWarnings(error?.response);
+    } catch (error) {
+      this.collectWarnings(failedResponse(error));
       throw await this.translateError(error);
     }
     try {
@@ -546,33 +591,36 @@ export class SanshainClient {
     systemname: string,
     catalogInfoYaml: string,
     stream?: Stream,
-    compression: boolean = false,
-    annotations?: Annotation[]
+    compression = false,
+    annotations?: Annotation[],
   ): Promise<CatalogPushResponse> {
-    const draft: CatalogPushPayload = { catalog_info_yaml: catalogInfoYaml, annotations };
+    const draft: CatalogPushPayload = { catalog_info_yaml: catalogInfoYaml };
     if (stream?.trunk) draft.trunk = true;
+    if (annotations) draft.annotations = annotations;
     const payload = this.withAnnotations(draft, false);
 
-    let data: any = payload;
+    let data: CatalogPushPayload | Buffer = payload;
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (compression) {
       data = await compress(JSON.stringify(payload));
       headers['Content-Encoding'] = 'gzip';
     }
 
-    let response: AxiosResponse;
+    let response: AxiosResponse<unknown>;
     try {
-      response = await this.axiosInstance.put(`/catalog/${encodeURIComponent(systemname)}`, data, { headers });
+      response = await this.axiosInstance.put<unknown>(`/catalog/${encodeURIComponent(systemname)}`, data, {
+        headers,
+      });
       this.collectWarnings(response);
-    } catch (error: any) {
-      this.collectWarnings(error?.response);
+    } catch (error) {
+      this.collectWarnings(failedResponse(error));
       if (this.refusedAnnotations(payload.annotations, error, 422)) {
         return this.pushCatalog(systemname, catalogInfoYaml, stream, compression);
       }
-      if (error?.response?.status === 404) {
+      if (failedResponse(error)?.status === 404) {
         await this.diagnoseOldServer();
         const server = this.serverVersion ? `server is ${this.serverVersion}` : 'server version unknown';
-        throw new Error(`sanshain catalog needs Sanshain Service 2.4.0 or later (${server})`);
+        throw new Error(`sanshain catalog needs Sanshain Service 2.4.0 or later (${server})`, { cause: error });
       }
       throw await this.translateError(error);
     }
@@ -580,11 +628,15 @@ export class SanshainClient {
     return { ...pushed, recorded: pushed.recorded !== false };
   }
 
-  private async postProvide(url: string, draft: any, compression: boolean = false): Promise<ProvideResponseBody | null> {
+  private async postProvide(
+    url: string,
+    draft: ProvideDraft,
+    compression = false,
+  ): Promise<ProvideResponseBody | null> {
     const payload = this.withAnnotations(draft, true);
-    let data: any = payload;
+    let data: ProvideDraft | Buffer = payload;
     const headers: Record<string, string> = {
-      'Content-Type': 'application/json'
+      'Content-Type': 'application/json',
     };
 
     if (compression) {
@@ -593,12 +645,13 @@ export class SanshainClient {
       headers['Content-Encoding'] = 'gzip';
     }
 
-    let response: AxiosResponse;
+    let response: AxiosResponse<unknown>;
     try {
-      response = await this.axiosInstance.post(url, data, { headers });
+      response = await this.axiosInstance.post<unknown>(url, data, { headers });
       this.collectWarnings(response);
-    } catch (error: any) {
-      this.collectWarnings(error?.response);
+    } catch (error) {
+      const refusal = failedResponse(error);
+      this.collectWarnings(refusal);
       // An older service refuses a field it does not know by name, one field
       // per answer: annotations before 2.13.0, the origin before 2.9.0. The
       // provide must not fail for a fact the service cannot store, so it is
@@ -608,18 +661,14 @@ export class SanshainClient {
       if (this.refusedAnnotations(payload.annotations, error, 422)) {
         return this.postProvide(url, payload, compression);
       }
-      if (error?.response?.status === 422 && hasOrigin(payload) && namesOriginField(error.response.data)) {
+      if (refusal?.status === 422 && hasOrigin(payload) && namesOriginField(refusal.data)) {
         console.warn("⚠ Sanshain Service before 2.9.0 does not take the build's origin; providing without it");
         return this.postProvide(url, withoutOrigin(payload), compression);
       }
       throw await this.translateError(error);
     }
     try {
-      const body = await this.decodeBody(response);
-      if (typeof body === 'string') {
-        return parseServerJson(body) as ProvideResponseBody;
-      }
-      return body as ProvideResponseBody;
+      return parseServerJson(await this.decodeBody(response)) as ProvideResponseBody;
     } catch {
       return null;
     }
@@ -636,7 +685,7 @@ export class SanshainClient {
     etag?: string,
     stream?: Stream,
     format?: RequireFormat,
-    annotations?: Annotation[]
+    annotations?: Annotation[],
   ): Promise<RequireResult> {
     let url = '/require';
     const type = wireApiType(api_type);
@@ -658,7 +707,7 @@ export class SanshainClient {
       dry_run,
       ...streamFields(stream),
       ...(format ? { format } : {}),
-      ...(sentAnnotations.length > 0 ? { annotations: JSON.stringify(sentAnnotations) } : {})
+      ...(sentAnnotations.length > 0 ? { annotations: JSON.stringify(sentAnnotations) } : {}),
     };
 
     const headers: Record<string, string> = {};
@@ -666,17 +715,18 @@ export class SanshainClient {
       headers['If-None-Match'] = etag;
     }
 
-    let response: AxiosResponse;
+    let response: AxiosResponse<unknown>;
     try {
-      response = await this.axiosInstance.get(url, {
+      response = await this.axiosInstance.get<unknown>(url, {
         params,
         headers,
         responseType: 'arraybuffer',
-        validateStatus: (status) => status === 200 || status === 304
+        validateStatus: (status) => status === 200 || status === 304,
       });
       this.collectWarnings(response);
-    } catch (error: any) {
-      this.collectWarnings(error?.response);
+    } catch (error) {
+      const refusal = failedResponse(error);
+      this.collectWarnings(refusal);
       // A service before 2.13.0 refuses the unknown annotations parameter
       // with 400 — checked before the format refusal, since it lists format
       // among the fields it expects.
@@ -684,9 +734,9 @@ export class SanshainClient {
         return this.require(consumername, producername, version, path, method, dry_run, api_type, etag, stream, format);
       }
       // A service older than 2.4.0 refuses the unknown query field with 400.
-      if (format && error?.response?.status === 400) {
-        const bodyText = await this.decodeBody(error.response);
-        const message = this.parseErrorBody(bodyText).error || bodyText;
+      if (format && refusal?.status === 400) {
+        const bodyText = await this.decodeBody(refusal);
+        const message = textOr(this.parseErrorBody(bodyText).error, bodyText);
         if (/format/i.test(message)) {
           await this.diagnoseOldServer();
           if (!this.serverVersion || versionBelow(this.serverVersion, 2, 4)) {
@@ -707,20 +757,20 @@ export class SanshainClient {
 
   async requireBundle(
     payload: RequireBundlePayload,
-    compression: boolean = false,
+    compression = false,
     etag?: string,
-    format?: RequireFormat
+    format?: RequireFormat,
   ): Promise<RequireResult> {
     const dataWithFallback = this.withAnnotations(
       {
         ...payload,
-        api_type: wireApiType(payload.api_type) || 'openapi'
+        api_type: textOr(wireApiType(payload.api_type), 'openapi'),
       },
-      false
+      false,
     );
-    let data: any = dataWithFallback;
+    let data: RequireBundlePayload | Buffer = dataWithFallback;
     const headers: Record<string, string> = {
-      'Content-Type': 'application/json'
+      'Content-Type': 'application/json',
     };
 
     if (etag) {
@@ -733,18 +783,18 @@ export class SanshainClient {
       headers['Content-Encoding'] = 'gzip';
     }
 
-    let response: AxiosResponse;
+    let response: AxiosResponse<unknown>;
     try {
-      response = await this.axiosInstance.post('/require-bundle', data, {
+      response = await this.axiosInstance.post<unknown>('/require-bundle', data, {
         // The bundle reads its stream from the body, but format from the query.
         ...(format ? { params: { format } } : {}),
         headers,
         responseType: 'arraybuffer',
-        validateStatus: (status) => status === 200 || status === 304
+        validateStatus: (status) => status === 200 || status === 304,
       });
       this.collectWarnings(response);
-    } catch (error: any) {
-      this.collectWarnings(error?.response);
+    } catch (error) {
+      this.collectWarnings(failedResponse(error));
       if (this.refusedAnnotations(dataWithFallback.annotations, error, 422)) {
         return this.requireBundle(payload, compression, etag, format);
       }
@@ -773,17 +823,18 @@ export class SanshainClient {
     throw this.formatNeedsServerError();
   }
 
-  private async toRequireResult(response: AxiosResponse): Promise<RequireResult> {
+  private async toRequireResult(response: AxiosResponse<unknown>): Promise<RequireResult> {
     if (response.status === 304) {
       return { content: null, etag: null, notModified: true };
     }
 
-    let body = response.data;
-    if (response.headers?.['content-encoding'] === 'gzip') {
+    // The calls ask for the bytes of the answer (responseType: 'arraybuffer').
+    let body = response.data as Buffer;
+    if (field(response.headers, 'content-encoding') === 'gzip') {
       body = await decompress(Buffer.from(body));
     }
     const content = Buffer.from(body).toString('utf8');
-    const responseEtag = response.headers?.['etag'] || null;
-    return { content, etag: responseEtag, notModified: false };
+    const etag = field(response.headers, 'etag');
+    return { content, etag: typeof etag === 'string' && etag ? etag : null, notModified: false };
   }
 }

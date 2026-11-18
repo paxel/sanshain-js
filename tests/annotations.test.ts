@@ -1,12 +1,18 @@
 /** Annotations: filling the placeholders, and where they travel on the wire. */
 import axios from 'axios';
 import { ANNOTATIONS_DROPPED_WARNING, Annotation, SanshainClient } from '../src/api';
+import http from 'http';
 import { fillAnnotations, parseSet } from '../src/config';
+import { MockedHttp, closed, listening, useRealHttp, nthCall } from './http';
 
 jest.mock('axios');
-const mockedAxios = axios as jest.Mocked<typeof axios>;
+const mockedAxios = axios as unknown as MockedHttp;
 
-const entry = (value: string, name = 'link', scope: Annotation['scope'] = 'version'): Annotation => ({ scope, name, value });
+const entry = (value: string, name = 'link', scope: Annotation['scope'] = 'version'): Annotation => ({
+  scope,
+  name,
+  value,
+});
 const sets = (...pairs: [string, string][]) => new Map(pairs);
 
 describe('fillAnnotations', () => {
@@ -28,18 +34,18 @@ describe('fillAnnotations', () => {
     const filled = fillAnnotations(
       [entry('first'), entry('id-{{MISSING}}', 'requirements'), entry('last', 'jenkins', 'system')],
       sets(),
-      {}
+      {},
     );
     expect(filled.annotations).toEqual([entry('first'), entry('last', 'jenkins', 'system')]);
     expect(filled.warnings).toEqual([
-      "annotation 'requirements' left out: {{MISSING}} is not set (--set MISSING=… or SANSHAIN_SET_MISSING)"
+      "annotation 'requirements' left out: {{MISSING}} is not set (--set MISSING=… or SANSHAIN_SET_MISSING)",
     ]);
   });
 
   it('names the first unfilled placeholder of an entry', () => {
     const filled = fillAnnotations([entry('{{AREA}}/{{ID}}/{{X}}', 'requirements')], sets(['AREA', '7']), {});
     expect(filled.warnings).toEqual([
-      "annotation 'requirements' left out: {{ID}} is not set (--set ID=… or SANSHAIN_SET_ID)"
+      "annotation 'requirements' left out: {{ID}} is not set (--set ID=… or SANSHAIN_SET_ID)",
     ]);
   });
 
@@ -57,7 +63,10 @@ describe('fillAnnotations', () => {
   });
 
   it('keeps a value without placeholders unchanged', () => {
-    expect(fillAnnotations([entry('plain value')], sets(), {})).toEqual({ annotations: [entry('plain value')], warnings: [] });
+    expect(fillAnnotations([entry('plain value')], sets(), {})).toEqual({
+      annotations: [entry('plain value')],
+      warnings: [],
+    });
   });
 
   it('keeps braces that are not a placeholder as literal text', () => {
@@ -68,7 +77,9 @@ describe('fillAnnotations', () => {
 
   it('reads the environment variable in exact case', () => {
     expect(fillAnnotations([entry('{{id}}')], sets(), { SANSHAIN_SET_ID: 'upper' }).annotations).toEqual([]);
-    expect(fillAnnotations([entry('{{id}}')], sets(), { SANSHAIN_SET_id: 'lower' }).annotations).toEqual([entry('lower')]);
+    expect(fillAnnotations([entry('{{id}}')], sets(), { SANSHAIN_SET_id: 'lower' }).annotations).toEqual([
+      entry('lower'),
+    ]);
   });
 
   it('a name that is an Object property is no flag', () => {
@@ -120,7 +131,7 @@ const PROVIDE_OK = JSON.stringify({
   version: '1.0.0',
   stability: 'snapshot',
   content_hash: 'sha256:abc',
-  changes: { inserts: 0, updates: 0, deletes: 0 }
+  changes: { inserts: 0, updates: 0, deletes: 0 },
 });
 
 const VERSION_ANNOTATION = entry('http://solar.system/id-7/requirements/42', 'requirements', 'version');
@@ -131,13 +142,13 @@ const refusal = (status: number, body: string) => ({ response: { status, data: b
 
 describe('annotations on the wire', () => {
   let client: SanshainClient;
-  let warn: jest.SpyInstance;
+  let warn: jest.SpyInstance<void, unknown[]>;
 
   beforeEach(() => {
     jest.clearAllMocks();
-    mockedAxios.create.mockReturnValue(mockedAxios as any);
+    mockedAxios.create.mockReturnValue(mockedAxios);
     client = new SanshainClient('http://localhost:3000');
-    warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
   });
 
   afterEach(() => {
@@ -152,7 +163,7 @@ describe('annotations on the wire', () => {
     await client.provideProto({ producername: 'p', proto_content: 'x', stability: 'snapshot', annotations: BOTH });
 
     for (const call of mockedAxios.post.mock.calls) {
-      expect((call[1] as any).annotations).toEqual(BOTH);
+      expect(call[1].annotations).toEqual(BOTH);
     }
   });
 
@@ -162,8 +173,8 @@ describe('annotations on the wire', () => {
     await client.provide({ producername: 'p', openapi_yaml: 'x', stability: 'snapshot', annotations: [] });
     await client.provide({ producername: 'p', openapi_yaml: 'x', stability: 'snapshot' });
 
-    expect(mockedAxios.post.mock.calls[0][1]).not.toHaveProperty('annotations');
-    expect(mockedAxios.post.mock.calls[1][1]).not.toHaveProperty('annotations');
+    expect(nthCall(mockedAxios.post, 0)[1]).not.toHaveProperty('annotations');
+    expect(nthCall(mockedAxios.post, 1)[1]).not.toHaveProperty('annotations');
   });
 
   it('a retire sends none', async () => {
@@ -171,7 +182,7 @@ describe('annotations on the wire', () => {
 
     await client.retire('p', 'asyncapi');
 
-    expect(mockedAxios.post.mock.calls[0][1]).toEqual({ producername: 'p', retired: true });
+    expect(nthCall(mockedAxios.post, 0)[1]).toEqual({ producername: 'p', retired: true });
   });
 
   it('a require sends the system ones as a JSON array in the query', async () => {
@@ -179,16 +190,18 @@ describe('annotations on the wire', () => {
 
     await client.require('c', 'p', '1.0.0', '/x', 'GET', false, undefined, undefined, undefined, undefined, BOTH);
 
-    const params = mockedAxios.get.mock.calls[0][1]?.params as Record<string, unknown>;
+    const params = nthCall(mockedAxios.get, 0)[1].params;
     expect(params.annotations).toBe(JSON.stringify([SYSTEM_ANNOTATION]));
   });
 
   it('a require with only version annotations sends no parameter', async () => {
     mockedAxios.get.mockResolvedValue({ status: 200, data: Buffer.from('paths: {}'), headers: {} });
 
-    await client.require('c', 'p', '1.0.0', '/x', 'GET', false, undefined, undefined, undefined, undefined, [VERSION_ANNOTATION]);
+    await client.require('c', 'p', '1.0.0', '/x', 'GET', false, undefined, undefined, undefined, undefined, [
+      VERSION_ANNOTATION,
+    ]);
 
-    expect(mockedAxios.get.mock.calls[0][1]?.params).not.toHaveProperty('annotations');
+    expect(nthCall(mockedAxios.get, 0)[1].params).not.toHaveProperty('annotations');
   });
 
   it('a bundle sends the system ones in the body', async () => {
@@ -199,18 +212,22 @@ describe('annotations on the wire', () => {
       producername: 'p',
       version: '1.0.0',
       endpoints: [{ path: '/x', method: 'GET' }],
-      annotations: BOTH
+      annotations: BOTH,
     });
 
-    expect((mockedAxios.post.mock.calls[0][1] as any).annotations).toEqual([SYSTEM_ANNOTATION]);
+    expect(nthCall(mockedAxios.post, 0)[1].annotations).toEqual([SYSTEM_ANNOTATION]);
   });
 
   it('a catalog push sends the system ones in the body', async () => {
-    mockedAxios.put.mockResolvedValue({ status: 200, data: JSON.stringify({ system: 's', trunk: false, resources: [] }), headers: {} });
+    mockedAxios.put.mockResolvedValue({
+      status: 200,
+      data: JSON.stringify({ system: 's', trunk: false, resources: [] }),
+      headers: {},
+    });
 
     await client.pushCatalog('s', 'yaml', undefined, false, BOTH);
 
-    expect(mockedAxios.put.mock.calls[0][1]).toEqual({ catalog_info_yaml: 'yaml', annotations: [SYSTEM_ANNOTATION] });
+    expect(nthCall(mockedAxios.put, 0)[1]).toEqual({ catalog_info_yaml: 'yaml', annotations: [SYSTEM_ANNOTATION] });
   });
 
   it('an older service refusing them on a provide: repeated once without them, the origin kept, warned once', async () => {
@@ -218,11 +235,17 @@ describe('annotations on the wire', () => {
       .mockRejectedValueOnce(refusal(422, PROVIDE_REFUSAL))
       .mockResolvedValue({ status: 202, data: PROVIDE_OK, headers: {} });
 
-    await client.provide({ producername: 'p', openapi_yaml: 'x', stability: 'snapshot', build_url: 'https://ci/1', annotations: BOTH });
+    await client.provide({
+      producername: 'p',
+      openapi_yaml: 'x',
+      stability: 'snapshot',
+      build_url: 'https://ci/1',
+      annotations: BOTH,
+    });
 
     expect(mockedAxios.post).toHaveBeenCalledTimes(2);
-    expect((mockedAxios.post.mock.calls[0][1] as any).annotations).toEqual(BOTH);
-    const repeated = mockedAxios.post.mock.calls[1][1] as any;
+    expect(nthCall(mockedAxios.post, 0)[1].annotations).toEqual(BOTH);
+    const repeated = nthCall(mockedAxios.post, 1)[1];
     expect(repeated).not.toHaveProperty('annotations');
     // The refusal lists build_url among the expected fields: no origin fallback.
     expect(repeated.build_url).toBe('https://ci/1');
@@ -231,19 +254,22 @@ describe('annotations on the wire', () => {
 
     // The rest of the run sends none, without warning again.
     await client.provideAsyncApi({ producername: 'p', asyncapi_yaml: 'x', stability: 'snapshot', annotations: BOTH });
-    expect(mockedAxios.post.mock.calls[2][1]).not.toHaveProperty('annotations');
+    expect(nthCall(mockedAxios.post, 2)[1]).not.toHaveProperty('annotations');
     expect(warn).toHaveBeenCalledTimes(1);
   });
 
   it('a 422 naming another field is no annotations refusal', async () => {
     mockedAxios.get.mockResolvedValue({ status: 200, data: JSON.stringify({ version: '2.13.0' }), headers: {} });
     mockedAxios.post.mockRejectedValue(
-      refusal(422, 'Failed to deserialize the JSON body into the target type: unknown field `colour`, expected one of `annotations`')
+      refusal(
+        422,
+        'Failed to deserialize the JSON body into the target type: unknown field `colour`, expected one of `annotations`',
+      ),
     );
 
-    await expect(client.provide({ producername: 'p', openapi_yaml: 'x', stability: 'snapshot', annotations: BOTH })).rejects.toThrow(
-      /422/
-    );
+    await expect(
+      client.provide({ producername: 'p', openapi_yaml: 'x', stability: 'snapshot', annotations: BOTH }),
+    ).rejects.toThrow(/422/);
     expect(mockedAxios.post).toHaveBeenCalledTimes(1);
     expect(warn).not.toHaveBeenCalled();
   });
@@ -251,13 +277,24 @@ describe('annotations on the wire', () => {
   it('a 2.8 service refusing annotations, then the origin, gets the provide without both', async () => {
     mockedAxios.post
       .mockRejectedValueOnce(refusal(422, PROVIDE_REFUSAL))
-      .mockRejectedValueOnce(refusal(422, 'Failed to deserialize the JSON body into the target type: unknown field `build_url`, expected one of `producername`'))
+      .mockRejectedValueOnce(
+        refusal(
+          422,
+          'Failed to deserialize the JSON body into the target type: unknown field `build_url`, expected one of `producername`',
+        ),
+      )
       .mockResolvedValue({ status: 202, data: PROVIDE_OK, headers: {} });
 
-    await client.provide({ producername: 'p', openapi_yaml: 'x', stability: 'snapshot', build_url: 'https://ci/1', annotations: BOTH });
+    await client.provide({
+      producername: 'p',
+      openapi_yaml: 'x',
+      stability: 'snapshot',
+      build_url: 'https://ci/1',
+      annotations: BOTH,
+    });
 
     expect(mockedAxios.post).toHaveBeenCalledTimes(3);
-    const last = mockedAxios.post.mock.calls[2][1] as any;
+    const last = nthCall(mockedAxios.post, 2)[1];
     expect(last).not.toHaveProperty('annotations');
     expect(last).not.toHaveProperty('build_url');
     expect(last.producername).toBe('p');
@@ -265,15 +302,26 @@ describe('annotations on the wire', () => {
 
   it('a 2.8 service refusing the origin, then annotations, gets the provide without both', async () => {
     mockedAxios.post
-      .mockRejectedValueOnce(refusal(422, 'Failed to deserialize the JSON body into the target type: unknown field `build_url`, expected one of `producername`'))
+      .mockRejectedValueOnce(
+        refusal(
+          422,
+          'Failed to deserialize the JSON body into the target type: unknown field `build_url`, expected one of `producername`',
+        ),
+      )
       .mockRejectedValueOnce(refusal(422, PROVIDE_REFUSAL))
       .mockResolvedValue({ status: 202, data: PROVIDE_OK, headers: {} });
 
-    await client.provide({ producername: 'p', openapi_yaml: 'x', stability: 'snapshot', build_url: 'https://ci/1', annotations: BOTH });
+    await client.provide({
+      producername: 'p',
+      openapi_yaml: 'x',
+      stability: 'snapshot',
+      build_url: 'https://ci/1',
+      annotations: BOTH,
+    });
 
     expect(mockedAxios.post).toHaveBeenCalledTimes(3);
-    expect((mockedAxios.post.mock.calls[1][1] as any).annotations).toEqual(BOTH);
-    const last = mockedAxios.post.mock.calls[2][1] as any;
+    expect(nthCall(mockedAxios.post, 1)[1].annotations).toEqual(BOTH);
+    const last = nthCall(mockedAxios.post, 2)[1];
     expect(last).not.toHaveProperty('annotations');
     expect(last).not.toHaveProperty('build_url');
   });
@@ -286,7 +334,7 @@ describe('annotations on the wire', () => {
     await client.provide({ producername: 'p', openapi_yaml: 'x', stability: 'snapshot', annotations: BOTH });
 
     expect(mockedAxios.post).toHaveBeenCalledTimes(2);
-    expect(mockedAxios.post.mock.calls[1][1]).not.toHaveProperty('annotations');
+    expect(nthCall(mockedAxios.post, 1)[1]).not.toHaveProperty('annotations');
   });
 
   it('an older service refusing the require parameter with 400: repeated once without it, before the format check', async () => {
@@ -294,13 +342,25 @@ describe('annotations on the wire', () => {
       .mockRejectedValueOnce(refusal(400, REQUIRE_REFUSAL))
       .mockResolvedValue({ status: 200, data: Buffer.from('openapi: 3.0.3\npaths: {}\n'), headers: {} });
 
-    const result = await client.require('c', 'p', '1.0.0', 'user/signup', 'SUB', false, 'asyncapi', undefined, undefined, 'openapi', BOTH);
+    const result = await client.require(
+      'c',
+      'p',
+      '1.0.0',
+      'user/signup',
+      'SUB',
+      false,
+      'asyncapi',
+      undefined,
+      undefined,
+      'openapi',
+      BOTH,
+    );
 
     expect(result.content).toContain('openapi: 3.0.3');
     expect(mockedAxios.get).toHaveBeenCalledTimes(2);
-    expect(mockedAxios.get.mock.calls[0][1]?.params).toHaveProperty('annotations');
-    expect(mockedAxios.get.mock.calls[1][1]?.params).not.toHaveProperty('annotations');
-    expect(mockedAxios.get.mock.calls[1][1]?.params).toMatchObject({ format: 'openapi' });
+    expect(nthCall(mockedAxios.get, 0)[1].params).toHaveProperty('annotations');
+    expect(nthCall(mockedAxios.get, 1)[1].params).not.toHaveProperty('annotations');
+    expect(nthCall(mockedAxios.get, 1)[1].params).toMatchObject({ format: 'openapi' });
     expect(warn).toHaveBeenCalledWith(`⚠ ${ANNOTATIONS_DROPPED_WARNING}`);
   });
 
@@ -309,24 +369,32 @@ describe('annotations on the wire', () => {
       .mockRejectedValueOnce(refusal(422, BUNDLE_REFUSAL))
       .mockResolvedValue({ status: 200, data: Buffer.from('paths: {}'), headers: {} });
 
-    await client.requireBundle({ consumername: 'c', producername: 'p', version: '1.0.0', endpoints: [{ path: '/x', method: 'GET' }], annotations: BOTH });
+    await client.requireBundle({
+      consumername: 'c',
+      producername: 'p',
+      version: '1.0.0',
+      endpoints: [{ path: '/x', method: 'GET' }],
+      annotations: BOTH,
+    });
 
     expect(mockedAxios.post).toHaveBeenCalledTimes(2);
-    expect((mockedAxios.post.mock.calls[0][1] as any).annotations).toEqual([SYSTEM_ANNOTATION]);
-    expect(mockedAxios.post.mock.calls[1][1]).not.toHaveProperty('annotations');
+    expect(nthCall(mockedAxios.post, 0)[1].annotations).toEqual([SYSTEM_ANNOTATION]);
+    expect(nthCall(mockedAxios.post, 1)[1]).not.toHaveProperty('annotations');
     expect(warn).toHaveBeenCalledTimes(1);
   });
 
   it('an older service refusing them on a catalog push: repeated once without them', async () => {
-    mockedAxios.put
-      .mockRejectedValueOnce(refusal(422, CATALOG_REFUSAL))
-      .mockResolvedValue({ status: 200, data: JSON.stringify({ system: 's', trunk: false, resources: [] }), headers: {} });
+    mockedAxios.put.mockRejectedValueOnce(refusal(422, CATALOG_REFUSAL)).mockResolvedValue({
+      status: 200,
+      data: JSON.stringify({ system: 's', trunk: false, resources: [] }),
+      headers: {},
+    });
 
     const pushed = await client.pushCatalog('s', 'yaml', undefined, false, BOTH);
 
     expect(pushed.recorded).toBe(true);
     expect(mockedAxios.put).toHaveBeenCalledTimes(2);
-    expect(mockedAxios.put.mock.calls[1][1]).toEqual({ catalog_info_yaml: 'yaml' });
+    expect(nthCall(mockedAxios.put, 1)[1]).toEqual({ catalog_info_yaml: 'yaml' });
     expect(warn).toHaveBeenCalledTimes(1);
   });
 
@@ -340,24 +408,24 @@ describe('annotations on the wire', () => {
   });
 
   it('over real HTTP, the require parameter arrives as the JSON array it was', async () => {
-    const http = require('http');
-    const realAxios = jest.requireActual('axios');
-    let received: string | null = null;
-    const server = http.createServer((req: any, res: any) => {
-      received = new URL(req.url, 'http://localhost').searchParams.get('annotations');
+    const received: (string | null)[] = [];
+    const server = http.createServer((req, res) => {
+      received.push(new URL(req.url ?? '', 'http://localhost').searchParams.get('annotations'));
       res.statusCode = 200;
       res.end('paths: {}');
     });
-    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const url = await listening(server);
     try {
-      mockedAxios.create.mockImplementation((config: any) => realAxios.create(config));
-      const realClient = new SanshainClient(`http://127.0.0.1:${server.address().port}`);
+      useRealHttp(mockedAxios);
+      const realClient = new SanshainClient(url);
       const tricky = entry('https://x.corp/a?b=1&c=2+3 #frag "q" ü', 'jenkins', 'system');
-      await realClient.require('c', 'p', '1.0.0', '/x', 'GET', false, undefined, undefined, undefined, undefined, [tricky]);
-      expect(JSON.parse(received ?? 'null')).toEqual([tricky]);
+      await realClient.require('c', 'p', '1.0.0', '/x', 'GET', false, undefined, undefined, undefined, undefined, [
+        tricky,
+      ]);
+      expect(JSON.parse(received[0] ?? 'null')).toEqual([tricky]);
     } finally {
       mockedAxios.create.mockReset();
-      await new Promise((resolve) => server.close(resolve));
+      await closed(server);
     }
   });
 });

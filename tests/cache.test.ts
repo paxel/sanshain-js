@@ -4,7 +4,7 @@ describe('SanshainCache keys', () => {
   it('a single endpoint keys producer, version, method and path, then format and output directory', () => {
     expect(SanshainCache.requireKey('users', '1.0.0', 'GET', '/users')).toBe('users|1.0.0|GET|/users');
     expect(SanshainCache.requireKey('users', '1.0.0', 'GET', '/users', 'openapi', 'gen/a')).toBe(
-      'users|1.0.0|GET|/users|openapi|out=gen/a'
+      'users|1.0.0|GET|/users|openapi|out=gen/a',
     );
   });
 

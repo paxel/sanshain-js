@@ -1,0 +1,9 @@
+coverage/
+dist/
+node_modules/
+package-lock.json
+# Markdown keeps the layout it is written in: the tables with their own separator rows and
+# the aligned comments in the examples, which prettier would rewrite.
+*.md
+# Written by the coverage ratchet of paxel/gates.
+.github/badges/
