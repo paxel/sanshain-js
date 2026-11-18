@@ -333,7 +333,12 @@ function entryOf(value: unknown): Record<string, unknown> {
 
 /** A value of sanshain.yaml as text, the way a message names it. */
 function shown(value: unknown): string {
-  return String(value);
+  try {
+    return String(value);
+  } catch {
+    // A mapping with a toString or valueOf field of its own, which is no function.
+    return Object.prototype.toString.call(value);
+  }
 }
 
 /** `name[index]`, the way an entry of a list is named in a message. */

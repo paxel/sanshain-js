@@ -259,6 +259,29 @@ provide:
       "provide: 'stability' does not belong in sanshain.yaml — the default is 'snapshot'; pass --ga or set SANSHAIN_GA=true for GA builds",
     );
   });
+  it('should name what an entry that is no mapping lacks', () => {
+    writeConfig('sanshainUrl: http://localhost:3000\nprovides:\n  - null\n');
+    expect(() => loadConfig(testYamlPath)).toThrow(
+      'At least one of file, openApiFile, asyncApiFile, or protoFile must be specified in provides[0]',
+    );
+
+    writeConfig('sanshainUrl: http://localhost:3000\nrequires:\n  - null\n');
+    expect(() => loadConfig(testYamlPath)).toThrow('Missing serviceName in requires[0]');
+
+    writeConfig(
+      'sanshainUrl: http://localhost:3000\nrequires:\n  - serviceName: auth\n    version: 1.2.0\n' +
+        '    outputDirectory: gen\n    endpoints:\n      - null\n',
+    );
+    expect(() => loadConfig(testYamlPath)).toThrow('Missing method in requires[0].endpoints[0]');
+  });
+
+  it('should name a mapping in the place of a name or a version without tripping over its fields', () => {
+    writeConfig('sanshainUrl: http://localhost:3000\nrequires:\n  - serviceName: { toString: 1 }\n');
+    expect(() => loadConfig(testYamlPath)).toThrow("requires[0] ([object Object]): missing 'version'");
+
+    writeConfig('sanshainUrl: http://localhost:3000\nprovide:\n  apiType: { toString: 1, valueOf: 2 }\n');
+    expect(() => loadConfig(testYamlPath)).toThrow("provide: unsupported apiType '[object Object]'");
+  });
 });
 
 describe('Stability resolution (ga switch)', () => {

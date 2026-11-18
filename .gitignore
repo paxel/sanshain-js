@@ -4,3 +4,5 @@ dist/
 .DS_Store
 coverage/
 .env
+# Inputs a fuzz run crashed on (libFuzzer writes them where it runs).
+crash-*

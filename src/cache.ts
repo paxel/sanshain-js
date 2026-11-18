@@ -29,8 +29,12 @@ export class SanshainCache {
   private load(): CacheState {
     try {
       if (fs.existsSync(this.cacheFile)) {
-        const data = JSON.parse(fs.readFileSync(this.cacheFile, 'utf8')) as Partial<CacheState> | null;
-        return { ...data, requires: data?.requires ?? {} };
+        const data: unknown = JSON.parse(fs.readFileSync(this.cacheFile, 'utf8'));
+        // Only a mapping is a state, and only a mapping can hold its requires: anything else
+        // in their place could not take the next entry.
+        if (isMapping(data)) {
+          return { ...data, requires: isMapping(data.requires) ? (data.requires as CacheState['requires']) : {} };
+        }
       }
     } catch {
       // Corrupted cache — start fresh
@@ -74,6 +78,10 @@ export class SanshainCache {
   static requireBundleKey(serviceName: string, version: string, format?: string, outputDirectory?: string): string {
     return `${serviceName}|${version}|bundle${format ? `|${format}` : ''}${outputSuffix(outputDirectory)}`;
   }
+}
+
+function isMapping(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /** The output directory as written in sanshain.yaml, with forward slashes, normalized, no trailing slash. */

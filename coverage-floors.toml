@@ -6,4 +6,4 @@
 [[parts]]
 name = "ts"
 lcov = "coverage/ts.lcov"
-floor = 91.98
+floor = 92.36

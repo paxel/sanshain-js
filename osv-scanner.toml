@@ -99,3 +99,42 @@ effectiveUntil = 2027-02-18
 reason = """A dependency of path-scurry, by the same author and under the same Blue Oak \
 Model License 1.0.0, permissive. Installed for the tests only; the release path-scurry asks \
 for carries this licence. Babel uses an older release under ISC beside it."""
+
+# What follows comes with Jazzer.js, the fuzzer, through cmake-js: the tool that would build
+# the fuzzer's native part from source. The part comes prebuilt and no install script runs, so
+# cmake-js never runs here. None of it is in the published package or among its dependencies.
+[[PackageOverrides]]
+name = "tar"
+ecosystem = "npm"
+license.ignore = true
+effectiveUntil = 2027-02-18
+reason = """tar is under the Blue Oak Model License 1.0.0, a permissive licence that asks \
+only for the licence text or a link to it to travel with copies. cmake-js asks for a release \
+of tar 7 that carries this licence. Installed for the fuzz run only."""
+
+[[PackageOverrides]]
+name = "chownr"
+ecosystem = "npm"
+license.ignore = true
+effectiveUntil = 2027-02-18
+reason = """A dependency of tar 7, by the same author and under the same Blue Oak Model \
+License 1.0.0, permissive. Installed for the fuzz run only; the release tar asks for carries \
+this licence."""
+
+[[PackageOverrides]]
+name = "yallist"
+ecosystem = "npm"
+license.ignore = true
+effectiveUntil = 2027-02-18
+reason = """A dependency of tar 7, by the same author and under the same Blue Oak Model \
+License 1.0.0, permissive. Installed for the fuzz run only; the release tar asks for carries \
+this licence. Babel uses an older release under ISC beside it."""
+
+[[PackageOverrides]]
+name = "isexe"
+ecosystem = "npm"
+license.ignore = true
+effectiveUntil = 2027-02-18
+reason = """isexe is under the Blue Oak Model License 1.0.0, permissive, in the release that \
+`which` asks for, with which cmake-js looks for the compiler. Installed for the fuzz run \
+only. eslint uses an older release under ISC beside it."""
