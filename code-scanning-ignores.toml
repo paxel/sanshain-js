@@ -40,6 +40,15 @@ the missing approvers and stale-review dismissal, so it stays below maximal."""
 # The four findings sonar-project.properties used to silence. Each is what the client is for:
 # it calls the instance the user names and reads and writes the files the user names.
 [[IgnoredAlerts]]
+tool = "CodeQL"
+rule = "js/disabling-certificate-validation"
+path = "src/api.ts"
+ignoreUntil = 2027-02-18
+reason = """--insecure is the user's explicit choice for an instance with a self-signed \
+certificate: only then does the client skip the verification of the certificate. Without the \
+flag Node's default TLS settings apply."""
+
+[[IgnoredAlerts]]
 tool = "SonarQube Cloud"
 rule = "tssecurity:S8690"
 path = "src/api.ts"
