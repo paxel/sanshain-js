@@ -21,11 +21,11 @@ jobs:
   # Known vulnerabilities and licences of every dependency: osv-scanner decided by gates'
   # osv_gate.py. What is accepted stands in osv-scanner.toml.
   vulns:
-    uses: paxel/gates/.github/workflows/vulns.yml@66ed2d3a448a5f6bfa1794809b330eb9fbee01ba # v1.2.0
+    uses: paxel/gates/.github/workflows/vulns.yml@02a81ad45b815cbed94f9bb6841424a624e8155f # v1.2.0
 
   # On the Node line .nvmrc pins, the newest LTS.
   ts:
-    uses: paxel/gates/.github/workflows/ts.yml@66ed2d3a448a5f6bfa1794809b330eb9fbee01ba # v1.2.0
+    uses: paxel/gates/.github/workflows/ts.yml@02a81ad45b815cbed94f9bb6841424a624e8155f # v1.2.0
 
   # `engines` in package.json promises Node 22.12 and later, so the package is built and
   # tested on that floor and on the LTS line between it and the pinned one, not just declared.
@@ -51,6 +51,6 @@ jobs:
 
   sonar:
     needs: ts
-    uses: paxel/gates/.github/workflows/sonar.yml@66ed2d3a448a5f6bfa1794809b330eb9fbee01ba # v1.2.0
+    uses: paxel/gates/.github/workflows/sonar.yml@02a81ad45b815cbed94f9bb6841424a624e8155f # v1.2.0
     secrets:
       sonar-token: ${{ secrets.SQ_TOKEN }}
