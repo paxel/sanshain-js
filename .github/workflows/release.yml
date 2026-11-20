@@ -1,77 +1,171 @@
-# Release on tag: `git tag v2.3.0 && git push origin v2.3.0` produces the
-# GitHub Release and the npm publish.
+# Release on tag: `git tag v2.7.1 && git push origin v2.7.1` produces everything.
 #
-# npm auth is Trusted Publishing (OIDC): no NPM_TOKEN — the `id-token`
-# permission plus a trusted-publisher entry on the npm package pointing at this
-# repository and this workflow file. Requires npm >= 11.5.1 and Node >= 22.14
-# (Node 24 bundles a new enough npm). The first publish of the name happens
-# manually, so the package exists to configure the publisher on.
+#   version     - the tag names the version package.json carries
+#   gate        - paxel/gates release-gate.yml: no open alert or SonarQube Cloud finding that
+#                 is not accepted, no known vulnerability, no licence outside the allowlist,
+#                 and a CHANGELOG section for the version
+#   build       - the tests on the tagged commit, then the npm tarball, packed once
+#   provenance  - paxel/gates provenance.yml: a CycloneDX SBOM of the source, signed build
+#                 provenance for every file and its Sigstore bundle as a file of its own
+#   release     - GitHub Release, notes = the CHANGELOG section for the tag, with every file
+#                 of the jobs before
+#   publish-npm - that same tarball to npm, with npm's own provenance
+#
+# npm auth is Trusted Publishing (OIDC): no NPM_TOKEN. It takes the `id-token` permission plus
+# a trusted-publisher entry on the npm package pointing at this repository and this workflow
+# file. Requires npm >= 11.5.1 and Node >= 22.14 (the Node .nvmrc pins bundles a new enough
+# npm). The first publish of the name happened by hand, so the package exists to configure the
+# publisher on.
+#
+# One-time setup (repository secrets):
+#   GATES_ALERTS_TOKEN - read access to the repository's alerts, for the release gate
 name: Release
 
 on:
   push:
-    tags:
-      - 'v*'
+    tags: ["v*"]
 
-# Read-only by default; only the release and publish jobs get more.
+# Least privilege: the jobs that write the GitHub Release and publish to npm widen this
+# themselves.
 permissions:
   contents: read
 
 jobs:
-  gate:
-    runs-on: ubuntu-latest
+  version:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.v.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: '24'
-          cache: 'npm'
-      # The mistake a hand-cut tag makes: tagging v2.4.0 without bumping the
-      # manifest. npm publishes what package.json says, so the tag would name
-      # a version nobody can install.
+          persist-credentials: false
+      # The mistake a hand-cut tag makes: tagging v2.4.0 without bumping the manifest. npm
+      # publishes what package.json says, so the tag would name a version nobody can install.
       - name: Tag matches the package version
         run: |
-          ver=$(node -p "require('./package.json').version")
+          ver=$(jq -r .version package.json)
           tag=${GITHUB_REF_NAME#v}
-          [ "$ver" = "$tag" ] || { echo "tag v$tag != package version $ver" >&2; exit 1; }
+          [ "$ver" = "$tag" ] || { echo "::error::tag v$tag != package version $ver" >&2; exit 1; }
+      - id: v
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+  gate:
+    needs: version
+    uses: paxel/gates/.github/workflows/release-gate.yml@02a81ad45b815cbed94f9bb6841424a624e8155f # v1.2.0
+    permissions:
+      contents: read
+      security-events: read
+    with:
+      version: ${{ needs.version.outputs.version }}
+    secrets:
+      alerts-token: ${{ secrets.GATES_ALERTS_TOKEN }}
+
+  build:
+    name: npm tarball
+    needs: gate
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The Node .nvmrc pins, the one CI tested with.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+      # No dependency's install script runs: none is needed to build or test.
       - run: npm ci --ignore-scripts
       - run: npm run build
       - run: npm test
+      # Packed once: this file is attested, attached to the GitHub Release and published to
+      # npm. Not into dist/, which is the compiler's output inside the package.
+      - name: Pack the npm tarball
+        run: |
+          mkdir -p release
+          npm pack --pack-destination release
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist-npm
+          path: release/*.tgz
+          if-no-files-found: error
+
+  provenance:
+    needs: build
+    uses: paxel/gates/.github/workflows/provenance.yml@02a81ad45b815cbed94f9bb6841424a624e8155f # v1.2.0
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    with:
+      name: sanshain-js
+      tag: ${{ github.ref_name }}
+      artifacts: dist-*
 
   release:
-    needs: gate
-    runs-on: ubuntu-latest
+    name: GitHub Release
+    needs: [version, provenance]
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Create GitHub Release
+        with:
+          persist-credentials: false
+      # The npm tarball, with the SBOM and the Sigstore bundle beside it:
+      # `gh attestation verify <file> -R paxel/sanshain-js` checks a download, with
+      # `--bundle <the sigstore file>` offline.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-files
+          path: release
+      - name: Release notes from the CHANGELOG section
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          awk -v ver="$VERSION" '
+            $0 ~ "^## \\[" ver "\\]" { grab = 1; next }
+            grab && (/^## \[/ || /^---/) { exit }
+            grab { print }
+          ' CHANGELOG.md > notes.md
+          [ -s notes.md ] || { echo "::error::CHANGELOG.md has no section for $VERSION" >&2; exit 1; }
+      # softprops updates an existing release rather than failing on it, so a re-run for
+      # the same tag is safe.
+      - name: Create or update the release
         uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
-          body_path: CHANGELOG.md
+          body_path: notes.md
+          files: release/*
+          fail_on_unmatched_files: true
 
   publish-npm:
-    needs: release
-    runs-on: ubuntu-latest
+    name: npm
+    needs: [version, release]
+    runs-on: ubuntu-24.04
     permissions:
+      contents: read
       id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: '24'
-          cache: 'npm'
-          registry-url: 'https://registry.npmjs.org'
-      - run: npm ci --ignore-scripts
-      - run: npm run build
-      # An npm version is immutable — republishing is a hard error, so a re-run
-      # (or a tag after the manual first publish) must skip what already landed.
-      # Once it is on npm, raise the `sanshain@<version>` pin in action.yml to it.
+          node-version-file: .nvmrc
+          registry-url: "https://registry.npmjs.org"
+      # The tarball the build job packed, the one that was attested and attached.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist-npm
+          path: release
+      # An npm version is immutable: republishing is a hard error, so a re-run (or a tag after
+      # a publish by hand) must skip what already landed. Once it is on npm, raise the
+      # `sanshain@<version>` pin in action.yml to it.
       - name: Publish to npm (trusted publishing, skipping published versions)
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
-          ver=$(node -p "require('./package.json').version")
-          if npm view "sanshain@${ver}" version >/dev/null 2>&1; then
-            echo "sanshain@${ver} already on npm — skipping"
+          if npm view "sanshain@${VERSION}" version >/dev/null 2>&1; then
+            echo "sanshain@${VERSION} already on npm, skipping"
           else
-            npm publish
+            # With ./ in front: npm reads a bare "release/<name>" as a GitHub repository.
+            npm publish "./release/sanshain-${VERSION}.tgz" --provenance
           fi

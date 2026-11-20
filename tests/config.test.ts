@@ -1,4 +1,12 @@
-import { UnknownFieldsError, envFlag, loadConfig, resolveOrigin, resolveStability, resolveStream, streamDeclared } from '../src/config';
+import {
+  UnknownFieldsError,
+  envFlag,
+  loadConfig,
+  resolveOrigin,
+  resolveStability,
+  resolveStream,
+  streamDeclared,
+} from '../src/config';
 import fs from 'fs';
 import path from 'path';
 
@@ -36,8 +44,8 @@ requires:
     expect(config.serviceName).toBe('test-service');
     expect(config.compression).toBe(true);
     expect(config.provide?.openApiFile).toBe('spec.yaml');
-    expect(config.requires?.[0].serviceName).toBe('other-service');
-    expect(config.requires?.[0].version).toBe('1.2.0');
+    expect(config.requires?.[0]?.serviceName).toBe('other-service');
+    expect(config.requires?.[0]?.version).toBe('1.2.0');
   });
 
   it('should resolve merge keys, so requires entries can share settings through an anchor', () => {
@@ -57,9 +65,9 @@ requires:
 `);
 
     const config = loadConfig(testYamlPath);
-    expect(config.requires?.[1].serviceName).toBe('other-service');
-    expect(config.requires?.[1].version).toBe('1.2.0');
-    expect(config.requires?.[1].outputDirectory).toBe('gen2');
+    expect(config.requires?.[1]?.serviceName).toBe('other-service');
+    expect(config.requires?.[1]?.version).toBe('1.2.0');
+    expect(config.requires?.[1]?.outputDirectory).toBe('gen2');
   });
 
   it('should throw error on missing required field', () => {
@@ -83,7 +91,7 @@ requires:
 `);
 
     expect(() => loadConfig(testYamlPath)).toThrow(
-      "requires[0] (user-service): missing 'version' — Sanshain 2.0 pins exact versions; add e.g. version: 1.2.0 (list available: GET /producers/user-service/versions)"
+      "requires[0] (user-service): missing 'version' — Sanshain 2.0 pins exact versions; add e.g. version: 1.2.0 (list available: GET /producers/user-service/versions)",
     );
   });
 
@@ -102,24 +110,30 @@ requires:
 `;
     writeConfig(entry('graphql'));
     expect(() => loadConfig(testYamlPath)).toThrow(
-      "requires[0] (user-service): unsupported apiType 'graphql' — use openapi, asyncapi or proto (grpc means proto)"
+      "requires[0] (user-service): unsupported apiType 'graphql' — use openapi, asyncapi or proto (grpc means proto)",
     );
     for (const apiType of ['openapi', 'asyncapi', 'proto', 'grpc']) {
       writeConfig(entry(apiType));
-      expect(loadConfig(testYamlPath).requires?.[0].apiType).toBe(apiType);
+      expect(loadConfig(testYamlPath).requires?.[0]?.apiType).toBe(apiType);
     }
   });
 
   it('should reject an unknown provide apiType, also on a retired entry', () => {
-    writeConfig('sanshainUrl: http://localhost:3000\nserviceName: test-service\nprovides:\n  - file: api.raml\n    apiType: raml\n');
-    expect(() => loadConfig(testYamlPath)).toThrow(
-      "provides[0]: unsupported apiType 'raml' — use openapi, asyncapi or proto (grpc means proto)"
+    writeConfig(
+      'sanshainUrl: http://localhost:3000\nserviceName: test-service\nprovides:\n  - file: api.raml\n    apiType: raml\n',
     );
-    writeConfig('sanshainUrl: http://localhost:3000\nserviceName: test-service\nprovide:\n  retired: true\n  apiType: soap\n');
+    expect(() => loadConfig(testYamlPath)).toThrow(
+      "provides[0]: unsupported apiType 'raml' — use openapi, asyncapi or proto (grpc means proto)",
+    );
+    writeConfig(
+      'sanshainUrl: http://localhost:3000\nserviceName: test-service\nprovide:\n  retired: true\n  apiType: soap\n',
+    );
     expect(() => loadConfig(testYamlPath)).toThrow("provide: unsupported apiType 'soap'");
     for (const apiType of ['openapi', 'asyncapi', 'proto', 'grpc']) {
-      writeConfig(`sanshainUrl: http://localhost:3000\nserviceName: test-service\nprovides:\n  - file: spec\n    apiType: ${apiType}\n`);
-      expect(loadConfig(testYamlPath).provides?.[0].apiType).toBe(apiType);
+      writeConfig(
+        `sanshainUrl: http://localhost:3000\nserviceName: test-service\nprovides:\n  - file: spec\n    apiType: ${apiType}\n`,
+      );
+      expect(loadConfig(testYamlPath).provides?.[0]?.apiType).toBe(apiType);
     }
   });
 
@@ -137,7 +151,7 @@ requires:
 `);
 
     expect(() => loadConfig(testYamlPath)).toThrow(
-      "requires[0] (user-service): version 'latest' is not a version — pin MAJOR[.MINOR[.PATCH]], optionally v-prefixed (no ranges, no 'latest')"
+      "requires[0] (user-service): version 'latest' is not a version — pin MAJOR[.MINOR[.PATCH]], optionally v-prefixed (no ranges, no 'latest')",
     );
   });
 
@@ -156,7 +170,7 @@ requires:
 `);
 
     expect(() => loadConfig(testYamlPath)).toThrow(
-      "requires[0] (user-service): 'branch' is no longer supported — the branch model was removed in Sanshain 2.0; replace with an exact 'version' pin"
+      "requires[0] (user-service): 'branch' is no longer supported — the branch model was removed in Sanshain 2.0; replace with an exact 'version' pin",
     );
   });
 
@@ -175,7 +189,7 @@ requires:
 `);
 
     expect(() => loadConfig(testYamlPath)).toThrow(
-      "requires[0] (user-service): 'timeout' is no longer supported — Sanshain 2.0 resolves immediately (no long-polling); remove it"
+      "requires[0] (user-service): 'timeout' is no longer supported — Sanshain 2.0 resolves immediately (no long-polling); remove it",
     );
   });
 
@@ -187,7 +201,7 @@ timeout: 60
 `);
 
     expect(() => loadConfig(testYamlPath)).toThrow(
-      "'timeout' is no longer supported — Sanshain 2.0 resolves immediately (no long-polling); remove it"
+      "'timeout' is no longer supported — Sanshain 2.0 resolves immediately (no long-polling); remove it",
     );
   });
 
@@ -201,7 +215,7 @@ provide:
 `);
 
     expect(() => loadConfig(testYamlPath)).toThrow(
-      "provide: 'baseVersion' is no longer supported — Sanshain 2.0 removed optimistic concurrency; the version is read from the spec file (info.version); remove it"
+      "provide: 'baseVersion' is no longer supported — Sanshain 2.0 removed optimistic concurrency; the version is read from the spec file (info.version); remove it",
     );
   });
 
@@ -215,7 +229,7 @@ provides:
 `);
 
     expect(() => loadConfig(testYamlPath)).toThrow(
-      "provides[0]: 'branch' is no longer supported — the branch model was removed in Sanshain 2.0; remove it"
+      "provides[0]: 'branch' is no longer supported — the branch model was removed in Sanshain 2.0; remove it",
     );
   });
 
@@ -228,7 +242,7 @@ releaseBranches:
 `);
 
     expect(() => loadConfig(testYamlPath)).toThrow(
-      "'releaseBranches' is no longer supported — stability is 'snapshot' by default; pass --ga or set SANSHAIN_GA=true for GA builds"
+      "'releaseBranches' is no longer supported — stability is 'snapshot' by default; pass --ga or set SANSHAIN_GA=true for GA builds",
     );
   });
 
@@ -242,8 +256,31 @@ provide:
 `);
 
     expect(() => loadConfig(testYamlPath)).toThrow(
-      "provide: 'stability' does not belong in sanshain.yaml — the default is 'snapshot'; pass --ga or set SANSHAIN_GA=true for GA builds"
+      "provide: 'stability' does not belong in sanshain.yaml — the default is 'snapshot'; pass --ga or set SANSHAIN_GA=true for GA builds",
     );
+  });
+  it('should name what an entry that is no mapping lacks', () => {
+    writeConfig('sanshainUrl: http://localhost:3000\nprovides:\n  - null\n');
+    expect(() => loadConfig(testYamlPath)).toThrow(
+      'At least one of file, openApiFile, asyncApiFile, or protoFile must be specified in provides[0]',
+    );
+
+    writeConfig('sanshainUrl: http://localhost:3000\nrequires:\n  - null\n');
+    expect(() => loadConfig(testYamlPath)).toThrow('Missing serviceName in requires[0]');
+
+    writeConfig(
+      'sanshainUrl: http://localhost:3000\nrequires:\n  - serviceName: auth\n    version: 1.2.0\n' +
+        '    outputDirectory: gen\n    endpoints:\n      - null\n',
+    );
+    expect(() => loadConfig(testYamlPath)).toThrow('Missing method in requires[0].endpoints[0]');
+  });
+
+  it('should name a mapping in the place of a name or a version without tripping over its fields', () => {
+    writeConfig('sanshainUrl: http://localhost:3000\nrequires:\n  - serviceName: { toString: 1 }\n');
+    expect(() => loadConfig(testYamlPath)).toThrow("requires[0] ([object Object]): missing 'version'");
+
+    writeConfig('sanshainUrl: http://localhost:3000\nprovide:\n  apiType: { toString: 1, valueOf: 2 }\n');
+    expect(() => loadConfig(testYamlPath)).toThrow("provide: unsupported apiType '[object Object]'");
   });
 });
 
@@ -357,10 +394,7 @@ describe('SANSHAIN_* boolean switches', () => {
   const testYamlPath = path.resolve(__dirname, 'test-switches-sanshain.yaml');
 
   beforeEach(() => {
-    process.env = { ...originalEnv };
-    for (const key of Object.keys(process.env)) {
-      if (key.startsWith('SANSHAIN_')) delete process.env[key];
-    }
+    process.env = Object.fromEntries(Object.entries(originalEnv).filter(([key]) => !key.startsWith('SANSHAIN_')));
     fs.writeFileSync(testYamlPath, 'sanshainUrl: http://localhost:3000\nserviceName: svc\n');
   });
 
@@ -393,35 +427,32 @@ describe('SANSHAIN_* boolean switches', () => {
     expect(resolveStream()).toEqual({});
   });
 
-  it.each([
+  it.each<[string, 'strict' | 'bestEffort' | 'force' | 'compression']>([
     ['SANSHAIN_STRICT', 'strict'],
     ['SANSHAIN_BEST_EFFORT', 'bestEffort'],
     ['SANSHAIN_FORCE', 'force'],
-    ['SANSHAIN_COMPRESSION', 'compression']
+    ['SANSHAIN_COMPRESSION', 'compression'],
   ])('%s follows the same rule in the loaded config', (name, field) => {
     for (const on of ['1', 'TRUE', ' true ']) {
       process.env[name] = on;
-      expect((loadConfig(testYamlPath) as any)[field]).toBe(true);
+      expect(loadConfig(testYamlPath)[field]).toBe(true);
     }
     process.env[name] = 'yes';
-    expect((loadConfig(testYamlPath) as any)[field]).toBe(false);
+    expect(loadConfig(testYamlPath)[field]).toBe(false);
   });
 });
 
 describe('unknown fields (the puzzled cat)', () => {
   const originalEnv = process.env;
   const testYamlPath = path.resolve(__dirname, 'test-unknown-sanshain.yaml');
-  let stderr: jest.SpyInstance;
+  let stderr: jest.SpyInstance<void, unknown[]>;
 
   // Written out literally, not built from the source, so an escaping slip shows.
   const cat = (line: string) => String.raw`   /\_/\  ?` + '\n' + `  ( O_o )   ${line}` + '\n' + ' ---U-U---';
 
   beforeEach(() => {
-    process.env = { ...originalEnv };
-    for (const key of Object.keys(process.env)) {
-      if (key.startsWith('SANSHAIN_')) delete process.env[key];
-    }
-    stderr = jest.spyOn(console, 'error').mockImplementation(() => {});
+    process.env = Object.fromEntries(Object.entries(originalEnv).filter(([key]) => !key.startsWith('SANSHAIN_')));
+    stderr = jest.spyOn(console, 'error').mockImplementation(() => undefined);
   });
 
   afterEach(() => {
@@ -443,7 +474,7 @@ describe('unknown fields (the puzzled cat)', () => {
 
     expect(config.serviceName).toBe('svc');
     expect(stderr).toHaveBeenCalledTimes(1);
-    expect(stderr.mock.calls[0][0]).toBe(cat("sanshain.yaml: unknown field 'catalogInf' - ignored"));
+    expect(stderr.mock.calls[0]?.[0]).toBe(cat("sanshain.yaml: unknown field 'catalogInf' - ignored"));
   });
 
   it('names several unknown fields in file order, with nested paths', () => {
@@ -472,30 +503,30 @@ describe('unknown fields (the puzzled cat)', () => {
         '      - methd: GET',
         '        method: GET',
         '        path: /c',
-        ''
-      ].join('\n')
+        '',
+      ].join('\n'),
     );
 
     expect(stderr).toHaveBeenCalledTimes(1);
-    expect(stderr.mock.calls[0][0]).toBe(
+    expect(stderr.mock.calls[0]?.[0]).toBe(
       cat(
         "sanshain.yaml: unknown fields 'catalogInf', 'provide.fiel', 'provides[1].verison', " +
-          "'requires[0].outputDirectroy', 'requires[0].endpoints[2].methd' - ignored"
-      )
+          "'requires[0].outputDirectroy', 'requires[0].endpoints[2].methd' - ignored",
+      ),
     );
   });
 
   it('strict fails with the cat saying rejected (strict)', () => {
     expect(() => load('sanshainUrl: http://localhost:3000\nserviceName: svc\nstrict: true\ncatalogInf: x\n')).toThrow(
-      UnknownFieldsError
+      UnknownFieldsError,
     );
-    expect(stderr.mock.calls[0][0]).toBe(cat("sanshain.yaml: unknown field 'catalogInf' - rejected (strict)"));
+    expect(stderr.mock.calls[0]?.[0]).toBe(cat("sanshain.yaml: unknown field 'catalogInf' - rejected (strict)"));
   });
 
   it('SANSHAIN_STRICT makes it strict too', () => {
     process.env.SANSHAIN_STRICT = '1';
     expect(() => load('sanshainUrl: http://localhost:3000\nserviceName: svc\ncatalogInf: x\n')).toThrow(
-      "sanshain.yaml: unknown field 'catalogInf' - rejected (strict)"
+      "sanshain.yaml: unknown field 'catalogInf' - rejected (strict)",
     );
   });
 
@@ -509,37 +540,39 @@ describe('unknown fields (the puzzled cat)', () => {
     '    endpoints:',
     '      - method: GET',
     '        path: /users',
-    ''
+    '',
   ].join('\n');
 
   it('the cat shows before a validation error the typo causes', () => {
     expect(() => load(typoedVersion)).toThrow("requires[0] (users): missing 'version'");
     expect(stderr).toHaveBeenCalledTimes(1);
-    expect(stderr.mock.calls[0][0]).toBe(cat("sanshain.yaml: unknown field 'requires[0].verison' - ignored"));
+    expect(stderr.mock.calls[0]?.[0]).toBe(cat("sanshain.yaml: unknown field 'requires[0].verison' - ignored"));
   });
 
   it('under strict, unknown fields fail before any other validation', () => {
     expect(() => load(`strict: true\n${typoedVersion}`)).toThrow(
-      "sanshain.yaml: unknown field 'requires[0].verison' - rejected (strict)"
+      "sanshain.yaml: unknown field 'requires[0].verison' - rejected (strict)",
     );
   });
 
   it('under best effort the strict of a file that does not validate does not count', () => {
     expect(() => load(`strict: true\n${typoedVersion}`, true)).toThrow("requires[0] (users): missing 'version'");
-    expect(stderr.mock.calls[0][0]).toBe(cat("sanshain.yaml: unknown field 'requires[0].verison' - ignored"));
+    expect(stderr.mock.calls[0]?.[0]).toBe(cat("sanshain.yaml: unknown field 'requires[0].verison' - ignored"));
   });
 
   it('under best effort SANSHAIN_STRICT still rejects the unknown fields', () => {
     process.env.SANSHAIN_STRICT = 'true';
     expect(() => load(typoedVersion, true)).toThrow(UnknownFieldsError);
-    expect(stderr.mock.calls[0][0]).toBe(cat("sanshain.yaml: unknown field 'requires[0].verison' - rejected (strict)"));
+    expect(stderr.mock.calls[0]?.[0]).toBe(
+      cat("sanshain.yaml: unknown field 'requires[0].verison' - rejected (strict)"),
+    );
   });
 
   it('under best effort strict still rejects the unknown fields of a file that validates', () => {
-    expect(() => load('sanshainUrl: http://localhost:3000\nserviceName: svc\nstrict: true\ncatalogInf: x\n', true)).toThrow(
-      UnknownFieldsError
-    );
-    expect(stderr.mock.calls[0][0]).toBe(cat("sanshain.yaml: unknown field 'catalogInf' - rejected (strict)"));
+    expect(() =>
+      load('sanshainUrl: http://localhost:3000\nserviceName: svc\nstrict: true\ncatalogInf: x\n', true),
+    ).toThrow(UnknownFieldsError);
+    expect(stderr.mock.calls[0]?.[0]).toBe(cat("sanshain.yaml: unknown field 'catalogInf' - rejected (strict)"));
   });
 
   it.each(['~\n', 'just text\n', '- sanshainUrl: http://localhost:3000\n'])(
@@ -547,24 +580,26 @@ describe('unknown fields (the puzzled cat)', () => {
     (yaml) => {
       process.env.SANSHAIN_URL = 'http://localhost:3000';
       expect(() => load(yaml)).toThrow(`${testYamlPath} must be a mapping of settings, such as sanshainUrl: <url>`);
-    }
+    },
   );
 
   it('the cat shows even when sanshainUrl is missing', () => {
     expect(() => load('serviceName: svc\nsanshainUrll: http://x\n')).toThrow('Missing required field: sanshainUrl');
-    expect(stderr.mock.calls[0][0]).toBe(cat("sanshain.yaml: unknown field 'sanshainUrll' - ignored"));
+    expect(stderr.mock.calls[0]?.[0]).toBe(cat("sanshain.yaml: unknown field 'sanshainUrll' - ignored"));
   });
 
   it('a legacy field in requires errors by name, before any cat', () => {
-    expect(() =>
-      load(typoedVersion.replace('    verison: 1.0.0', '    verison: 1.0.0\n    branch: main'))
-    ).toThrow("requires[0] (users): 'branch' is no longer supported");
+    expect(() => load(typoedVersion.replace('    verison: 1.0.0', '    verison: 1.0.0\n    branch: main'))).toThrow(
+      "requires[0] (users): 'branch' is no longer supported",
+    );
     expect(stderr).not.toHaveBeenCalled();
   });
 
   it('a legacy field still errors by name, before any cat', () => {
     expect(() =>
-      load('sanshainUrl: http://localhost:3000\nserviceName: svc\ncatalogInf: x\nprovide:\n  file: a.yaml\n  baseVersion: 5\n')
+      load(
+        'sanshainUrl: http://localhost:3000\nserviceName: svc\ncatalogInf: x\nprovide:\n  file: a.yaml\n  baseVersion: 5\n',
+      ),
     ).toThrow("provide: 'baseVersion' is no longer supported");
     expect(stderr).not.toHaveBeenCalled();
   });
@@ -581,8 +616,8 @@ describe('unknown fields (the puzzled cat)', () => {
         'provides:',
         '  - file: a.yaml',
         '    combine: true',
-        ''
-      ].join('\n')
+        '',
+      ].join('\n'),
     );
     expect(stderr).not.toHaveBeenCalled();
   });
@@ -590,14 +625,17 @@ describe('unknown fields (the puzzled cat)', () => {
 
 describe('annotations in sanshain.yaml', () => {
   const testYamlPath = path.resolve(__dirname, 'test-annotations-sanshain.yaml');
-  let stderr: jest.SpyInstance;
+  let stderr: jest.SpyInstance<void, unknown[]>;
   const load = (annotations: string, extra = '') => {
-    fs.writeFileSync(testYamlPath, `sanshainUrl: http://localhost:3000\nserviceName: svc\n${extra}annotations:\n${annotations}`);
+    fs.writeFileSync(
+      testYamlPath,
+      `sanshainUrl: http://localhost:3000\nserviceName: svc\n${extra}annotations:\n${annotations}`,
+    );
     return loadConfig(testYamlPath);
   };
 
   beforeEach(() => {
-    stderr = jest.spyOn(console, 'error').mockImplementation(() => {});
+    stderr = jest.spyOn(console, 'error').mockImplementation(() => undefined);
   });
 
   afterEach(() => {
@@ -608,11 +646,11 @@ describe('annotations in sanshain.yaml', () => {
   it('reads the entries as written, placeholders unfilled', () => {
     const config = load(
       '  - scope: version\n    name: requirements\n    value: "http://solar.system/id-{{AREA}}/requirements/{{ID}}"\n' +
-        '  - scope: system\n    name: jenkins\n    value: "https://jenkins.corp/job/payments"\n'
+        '  - scope: system\n    name: jenkins\n    value: "https://jenkins.corp/job/payments"\n',
     );
     expect(config.annotations).toEqual([
       { scope: 'version', name: 'requirements', value: 'http://solar.system/id-{{AREA}}/requirements/{{ID}}' },
-      { scope: 'system', name: 'jenkins', value: 'https://jenkins.corp/job/payments' }
+      { scope: 'system', name: 'jenkins', value: 'https://jenkins.corp/job/payments' },
     ]);
     expect(stderr).not.toHaveBeenCalled();
   });
@@ -627,14 +665,18 @@ describe('annotations in sanshain.yaml', () => {
   });
 
   it('a value that is not a string is an error, not converted', () => {
-    expect(() => load('  - scope: system\n    name: build\n    value: 42\n')).toThrow("annotations[0] (build): 'value' must be a string");
-    expect(() => load('  - scope: system\n    name: true\n    value: x\n')).toThrow("annotations[0]: 'name' must be a string");
+    expect(() => load('  - scope: system\n    name: build\n    value: 42\n')).toThrow(
+      "annotations[0] (build): 'value' must be a string",
+    );
+    expect(() => load('  - scope: system\n    name: true\n    value: x\n')).toThrow(
+      "annotations[0]: 'name' must be a string",
+    );
   });
 
   it('another scope names the entry', () => {
-    expect(() => load('  - scope: version\n    name: a\n    value: x\n  - scope: global\n    name: b\n    value: y\n')).toThrow(
-      "annotations[1] (b): scope 'global' is not supported — use version or system"
-    );
+    expect(() =>
+      load('  - scope: version\n    name: a\n    value: x\n  - scope: global\n    name: b\n    value: y\n'),
+    ).toThrow("annotations[1] (b): scope 'global' is not supported — use version or system");
   });
 
   it('a list of something else, or no list, is an error', () => {
@@ -644,8 +686,10 @@ describe('annotations in sanshain.yaml', () => {
 
   it('an extra key in an entry is an unknown field, failing only under strict', () => {
     load('  - scope: system\n    name: a\n    value: x\n    colour: red\n');
-    expect(stderr.mock.calls[0][0]).toContain("unknown field 'annotations[0].colour' - ignored");
-    expect(() => load('  - scope: system\n    name: a\n    value: x\n    colour: red\n', 'strict: true\n')).toThrow(UnknownFieldsError);
+    expect(stderr.mock.calls[0]?.[0]).toContain("unknown field 'annotations[0].colour' - ignored");
+    expect(() => load('  - scope: system\n    name: a\n    value: x\n    colour: red\n', 'strict: true\n')).toThrow(
+      UnknownFieldsError,
+    );
   });
 });
 
@@ -663,7 +707,10 @@ describe('Origin resolution (why this build provides)', () => {
       BUILD_URL: 'https://jenkins/7',
     };
     expect(
-      resolveOrigin({ buildUrl: ' https://ci/opt ', changeUrl: 'https://git/opt', tickets: 'A-1, A-2 ,A-1,', note: ' opt ' }, env),
+      resolveOrigin(
+        { buildUrl: ' https://ci/opt ', changeUrl: 'https://git/opt', tickets: 'A-1, A-2 ,A-1,', note: ' opt ' },
+        env,
+      ),
     ).toEqual({ build_url: 'https://ci/opt', change_url: 'https://git/opt', tickets: ['A-1', 'A-2'], note: 'opt' });
     expect(resolveOrigin({}, env)).toEqual({
       build_url: 'https://ci/env',
@@ -675,22 +722,28 @@ describe('Origin resolution (why this build provides)', () => {
 
   it('reads the build and change URL from GitHub Actions, GitLab CI and Jenkins', () => {
     expect(
-      resolveOrigin({}, {
-        GITHUB_SERVER_URL: 'https://github.com',
-        GITHUB_REPOSITORY: 'acme/orders',
-        GITHUB_RUN_ID: '123',
-        GITHUB_REF: 'refs/pull/42/merge',
-      }),
+      resolveOrigin(
+        {},
+        {
+          GITHUB_SERVER_URL: 'https://github.com',
+          GITHUB_REPOSITORY: 'acme/orders',
+          GITHUB_RUN_ID: '123',
+          GITHUB_REF: 'refs/pull/42/merge',
+        },
+      ),
     ).toEqual({
       build_url: 'https://github.com/acme/orders/actions/runs/123',
       change_url: 'https://github.com/acme/orders/pull/42',
     });
     expect(
-      resolveOrigin({}, {
-        CI_JOB_URL: 'https://gitlab/acme/orders/-/jobs/7',
-        CI_MERGE_REQUEST_PROJECT_URL: 'https://gitlab/acme/orders',
-        CI_MERGE_REQUEST_IID: '12',
-      }),
+      resolveOrigin(
+        {},
+        {
+          CI_JOB_URL: 'https://gitlab/acme/orders/-/jobs/7',
+          CI_MERGE_REQUEST_PROJECT_URL: 'https://gitlab/acme/orders',
+          CI_MERGE_REQUEST_IID: '12',
+        },
+      ),
     ).toEqual({
       build_url: 'https://gitlab/acme/orders/-/jobs/7',
       change_url: 'https://gitlab/acme/orders/-/merge_requests/12',
@@ -701,7 +754,10 @@ describe('Origin resolution (why this build provides)', () => {
     });
     // A push build belongs to no change.
     expect(
-      resolveOrigin({}, { GITHUB_SERVER_URL: 'https://github.com', GITHUB_REPOSITORY: 'a/b', GITHUB_REF: 'refs/heads/main' }),
+      resolveOrigin(
+        {},
+        { GITHUB_SERVER_URL: 'https://github.com', GITHUB_REPOSITORY: 'a/b', GITHUB_REF: 'refs/heads/main' },
+      ),
     ).toEqual({});
   });
 });

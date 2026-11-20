@@ -1,14 +1,16 @@
 # sanshain (JS/TS client)
 
-[![Build and Test](https://github.com/paxel/sanshain-js/actions/workflows/build.yml/badge.svg?branch=summer)](https://github.com/paxel/sanshain-js/actions/workflows/build.yml)
+[![CI](https://github.com/paxel/sanshain-js/actions/workflows/ci.yml/badge.svg?branch=summer)](https://github.com/paxel/sanshain-js/actions/workflows/ci.yml)
 [![Security](https://github.com/paxel/sanshain-js/actions/workflows/security.yml/badge.svg?branch=summer)](https://github.com/paxel/sanshain-js/actions/workflows/security.yml)
-[![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=paxel_sanshain-js&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=paxel_sanshain-js)
-[![Security Rating](https://sonarcloud.io/api/project_badges/measure?project=paxel_sanshain-js&metric=security_rating)](https://sonarcloud.io/summary/new_code?id=paxel_sanshain-js)
-[![Coverage](https://sonarcloud.io/api/project_badges/measure?project=paxel_sanshain-js&metric=coverage)](https://sonarcloud.io/summary/new_code?id=paxel_sanshain-js)
+[![CodeQL](https://github.com/paxel/sanshain-js/actions/workflows/codeql.yml/badge.svg?branch=summer)](https://github.com/paxel/sanshain-js/actions/workflows/codeql.yml)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/paxel/sanshain-js/badge)](https://scorecard.dev/viewer/?uri=github.com/paxel/sanshain-js)
+[![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=paxel_sanshain-js&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=paxel_sanshain-js)
+[![Coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fpaxel%2Fsanshain-js%2Fsummer%2F.github%2Fbadges%2Fcoverage-ts.json)](coverage-floors.toml)
+[![Fuzz](https://github.com/paxel/sanshain-js/actions/workflows/fuzz.yml/badge.svg?branch=summer)](https://github.com/paxel/sanshain-js/actions/workflows/fuzz.yml)
+[![Release](https://img.shields.io/github/v/release/paxel/sanshain-js)](https://github.com/paxel/sanshain-js/releases)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+
 [![npm](https://img.shields.io/npm/v/sanshain)](https://www.npmjs.com/package/sanshain)
-[![Node 22.12+](https://img.shields.io/badge/node-22.12%2B-blue)](https://github.com/paxel/sanshain-js/actions/workflows/build.yml)
-[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](https://github.com/paxel/sanshain-js/blob/summer/LICENSE)
 
 TypeScript/Node.js client, CLI and GitHub Action for the [Sanshain Service](https://github.com/paxel/sanshain-service), published on npm as **`sanshain`**. A project provides its API specifications (OpenAPI, AsyncAPI, gRPC/Proto) under the version declared in the spec file, and downloads the endpoint snippets it depends on, pinned to an exact version.
 

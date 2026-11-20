@@ -1,21 +1,18 @@
 /** The 2.2 surface: streams, retire, harvested subscriptions, line endings. */
 import axios from 'axios';
-import {
-  SanshainClient,
-  describeSubscription,
-  isAdvisory
-} from '../src/api';
+import { SanshainClient, describeSubscription, isAdvisory } from '../src/api';
 import { resolveStream, resolveStreamWithWarning } from '../src/config';
 import { normalizeLineEndings } from '../src/utils';
+import { MockedHttp, nthCall } from './http';
 
 jest.mock('axios');
-const mockedAxios = axios as jest.Mocked<typeof axios>;
+const mockedAxios = axios as unknown as MockedHttp;
 
 const PROVIDE_OK = JSON.stringify({
   version: '1.0.0',
   stability: 'snapshot',
   content_hash: 'sha256:abc',
-  changes: { inserts: 0, updates: 0, deletes: 0 }
+  changes: { inserts: 0, updates: 0, deletes: 0 },
 });
 
 describe('resolveStream', () => {
@@ -60,7 +57,7 @@ describe('streams on the wire', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    mockedAxios.create.mockReturnValue(mockedAxios as any);
+    mockedAxios.create.mockReturnValue(mockedAxios);
     client = new SanshainClient('http://localhost:3000');
   });
 
@@ -68,13 +65,13 @@ describe('streams on the wire', () => {
     mockedAxios.post.mockResolvedValue({ status: 202, data: PROVIDE_OK, headers: {} });
 
     await client.provide({ producername: 'p', openapi_yaml: 'x', stability: 'snapshot', trunk: true });
-    expect(mockedAxios.post.mock.calls[0][1]).toMatchObject({ trunk: true });
+    expect(nthCall(mockedAxios.post, 0)[1]).toMatchObject({ trunk: true });
 
     await client.provide({ producername: 'p', openapi_yaml: 'x', stability: 'snapshot', tag: 'R' });
-    expect(mockedAxios.post.mock.calls[1][1]).toMatchObject({ tag: 'R' });
+    expect(nthCall(mockedAxios.post, 1)[1]).toMatchObject({ tag: 'R' });
 
     await client.provide({ producername: 'p', openapi_yaml: 'x', stability: 'snapshot' });
-    const bare = mockedAxios.post.mock.calls[2][1] as Record<string, unknown>;
+    const bare = nthCall(mockedAxios.post, 2)[1];
     expect(bare).not.toHaveProperty('trunk');
     expect(bare).not.toHaveProperty('tag');
   });
@@ -83,13 +80,13 @@ describe('streams on the wire', () => {
     mockedAxios.get.mockResolvedValue({ status: 200, data: Buffer.from('paths: {}'), headers: {} });
 
     await client.require('c', 'p', '1.0.0', '/x', 'GET', false, undefined, undefined, { trunk: true });
-    expect(mockedAxios.get.mock.calls[0][1]?.params).toMatchObject({ trunk: true });
+    expect(nthCall(mockedAxios.get, 0)[1].params).toMatchObject({ trunk: true });
 
     await client.require('c', 'p', '1.0.0', '/x', 'GET', false, undefined, undefined, { tag: 'R' });
-    expect(mockedAxios.get.mock.calls[1][1]?.params).toMatchObject({ tag: 'R' });
+    expect(nthCall(mockedAxios.get, 1)[1].params).toMatchObject({ tag: 'R' });
 
     await client.require('c', 'p', '1.0.0', '/x', 'GET');
-    const params = mockedAxios.get.mock.calls[2][1]?.params as Record<string, unknown>;
+    const params = nthCall(mockedAxios.get, 2)[1].params;
     expect(params).not.toHaveProperty('trunk');
     expect(params).not.toHaveProperty('tag');
   });
@@ -106,12 +103,12 @@ describe('streams on the wire', () => {
       version: '1.0.0',
       endpoints: [
         { path: '/x', method: 'GET' },
-        { path: '/y', method: 'GET' }
+        { path: '/y', method: 'GET' },
       ],
-      trunk: true
+      trunk: true,
     });
-    expect(mockedAxios.post.mock.calls[0][0]).toBe('/require-bundle');
-    expect(mockedAxios.post.mock.calls[0][1]).toMatchObject({ trunk: true });
+    expect(nthCall(mockedAxios.post, 0)[0]).toBe('/require-bundle');
+    expect(nthCall(mockedAxios.post, 0)[1]).toMatchObject({ trunk: true });
   });
 });
 
@@ -120,7 +117,7 @@ describe('retire', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    mockedAxios.create.mockReturnValue(mockedAxios as any);
+    mockedAxios.create.mockReturnValue(mockedAxios);
     client = new SanshainClient('http://localhost:3000');
   });
 
@@ -128,13 +125,13 @@ describe('retire', () => {
     mockedAxios.post.mockResolvedValue({
       status: 202,
       data: JSON.stringify({ tag_cleared: 'messaging', trunk_pins_closed: 2, contracts_released: 1 }),
-      headers: {}
+      headers: {},
     });
 
     const shed = await client.retire('notifier', 'asyncapi');
 
-    expect(mockedAxios.post.mock.calls[0][0]).toBe('/provide/asyncapi');
-    expect(mockedAxios.post.mock.calls[0][1]).toEqual({ producername: 'notifier', retired: true });
+    expect(nthCall(mockedAxios.post, 0)[0]).toBe('/provide/asyncapi');
+    expect(nthCall(mockedAxios.post, 0)[1]).toEqual({ producername: 'notifier', retired: true });
     expect(shed).toEqual({ tag_cleared: 'messaging', trunk_pins_closed: 2, contracts_released: 1 });
   });
 
@@ -142,25 +139,25 @@ describe('retire', () => {
     mockedAxios.post.mockResolvedValue({
       status: 202,
       data: JSON.stringify({ trunk_pins_closed: 0, contracts_released: 0 }),
-      headers: {}
+      headers: {},
     });
 
     await client.retire('svc', undefined, true);
 
-    expect(mockedAxios.post.mock.calls[0][0]).toBe('/provide');
-    expect(mockedAxios.post.mock.calls[0][1]).toEqual({ producername: 'svc', retired: true, dry_run: true });
+    expect(nthCall(mockedAxios.post, 0)[0]).toBe('/provide');
+    expect(nthCall(mockedAxios.post, 0)[1]).toEqual({ producername: 'svc', retired: true, dry_run: true });
   });
 
   it('a 403 names the role, the maintainer grant and the snapshot fallback', async () => {
     // The lazy wrong-server check answers 2.x, keeping the original error.
     mockedAxios.get.mockResolvedValue({ status: 200, data: JSON.stringify({ version: '2.2.0' }), headers: {} });
     mockedAxios.post.mockRejectedValue({
-      response: { status: 403, data: JSON.stringify({ error: "requires the 'releaser' role" }), headers: {} }
+      response: { status: 403, data: JSON.stringify({ error: "requires the 'releaser' role" }), headers: {} },
     });
 
     await expect(client.retire('svc')).rejects.toThrow(/releaser/);
     mockedAxios.post.mockRejectedValue({
-      response: { status: 403, data: JSON.stringify({ error: "requires the 'releaser' role" }), headers: {} }
+      response: { status: 403, data: JSON.stringify({ error: "requires the 'releaser' role" }), headers: {} },
     });
     await expect(client.retire('svc')).rejects.toThrow(/maintainer/);
   });
@@ -170,17 +167,18 @@ describe('retire', () => {
     const readOnly =
       "this API token has scope 'read_only' and may not change the catalog; create a token with scope 'full' for provide, require and catalog pushes";
     mockedAxios.post.mockRejectedValue({
-      response: { status: 403, data: JSON.stringify({ error: readOnly }), headers: {} }
+      response: { status: 403, data: JSON.stringify({ error: readOnly }), headers: {} },
     });
 
     const retired = client.retire('svc');
     await expect(retired).rejects.toThrow(`Refused (403): ${readOnly}`);
     await expect(retired).rejects.not.toThrow(/releaser|maintainer|SANSHAIN_GA/);
     mockedAxios.post.mockRejectedValue({
-      response: { status: 403, data: JSON.stringify({ error: readOnly }), headers: {} }
+      response: { status: 403, data: JSON.stringify({ error: readOnly }), headers: {} },
     });
-    await expect(client.provide({ producername: 'svc', openapi_yaml: 'openapi: 3.0.3\n', stability: 'snapshot' }))
-      .rejects.toThrow(new Error(`Refused (403): ${readOnly}`));
+    await expect(
+      client.provide({ producername: 'svc', openapi_yaml: 'openapi: 3.0.3\n', stability: 'snapshot' }),
+    ).rejects.toThrow(new Error(`Refused (403): ${readOnly}`));
   });
 });
 
@@ -196,17 +194,17 @@ describe('line endings', () => {
 
   it('provide uploads LF content', async () => {
     jest.clearAllMocks();
-    mockedAxios.create.mockReturnValue(mockedAxios as any);
+    mockedAxios.create.mockReturnValue(mockedAxios);
     const client = new SanshainClient('http://localhost:3000');
     mockedAxios.post.mockResolvedValue({ status: 202, data: PROVIDE_OK, headers: {} });
 
     await client.provide({
       producername: 'svc',
       openapi_yaml: 'openapi: 3.0.3\r\ninfo:\r\n  title: T\r',
-      stability: 'snapshot'
+      stability: 'snapshot',
     });
 
-    const sent = mockedAxios.post.mock.calls[0][1] as { openapi_yaml: string };
+    const sent = nthCall(mockedAxios.post, 0)[1] as { openapi_yaml: string };
     expect(sent.openapi_yaml).toBe('openapi: 3.0.3\ninfo:\n  title: T\n');
   });
 });
@@ -214,7 +212,7 @@ describe('line endings', () => {
 describe('harvested subscriptions', () => {
   it('ride the response and classify advisories', async () => {
     jest.clearAllMocks();
-    mockedAxios.create.mockReturnValue(mockedAxios as any);
+    mockedAxios.create.mockReturnValue(mockedAxios);
     const client = new SanshainClient('http://localhost:3000');
     mockedAxios.post.mockResolvedValue({
       status: 202,
@@ -225,19 +223,21 @@ describe('harvested subscriptions', () => {
         changes: { inserts: 0, updates: 0, deletes: 0 },
         harvested_subscriptions: [
           { channel: 'user/signup', message_name: 'UserSignedUp', owner: 'accounts' },
-          { channel: 'order/placed', message_name: 'OrderPlaced', drift: "expects 'total'" }
-        ]
+          { channel: 'order/placed', message_name: 'OrderPlaced', drift: "expects 'total'" },
+        ],
       }),
-      headers: {}
+      headers: {},
     });
 
     const res = await client.provideAsyncApi({ producername: 'p', asyncapi_yaml: 'x', stability: 'snapshot' });
     const subs = res?.harvested_subscriptions ?? [];
     expect(subs).toHaveLength(2);
-    expect(isAdvisory(subs[0])).toBe(false);
-    expect(describeSubscription(subs[0])).toContain('accounts');
-    expect(isAdvisory(subs[1])).toBe(true);
-    expect(describeSubscription(subs[1])).toContain('no publisher yet');
-    expect(describeSubscription(subs[1])).toContain('total');
+    const [owned, drifted] = subs;
+    if (!owned || !drifted) throw new Error('two subscriptions expected');
+    expect(isAdvisory(owned)).toBe(false);
+    expect(describeSubscription(owned)).toContain('accounts');
+    expect(isAdvisory(drifted)).toBe(true);
+    expect(describeSubscription(drifted)).toContain('no publisher yet');
+    expect(describeSubscription(drifted)).toContain('total');
   });
 });

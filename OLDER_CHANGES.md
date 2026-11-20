@@ -3,6 +3,11 @@
 This file contains historical changelog entries for sanshain-js.
 For recent changes, see [CHANGELOG.md](CHANGELOG.md).
 
+## [2.7.0] - 2026-11-12
+
+### Changed
+- Requires Node.js 22.12 or newer (was 20), also for the GitHub Action, which runs on the job's Node.
+
 ## [2.6.0] - 2026-11-11
 
 ### Added

@@ -18,15 +18,18 @@ export function sanitize(text: string): string {
   if (sanitized.length > 1000) {
     sanitized = sanitized.substring(0, 1000) + '... (truncated)';
   }
-  return sanitized.split('').map(char => {
-    const code = char.charCodeAt(0);
-    // Allow common whitespace (space, tab, newline, carriage return)
-    if (code === 32 || (code >= 9 && code <= 13)) return char;
-    // Allow printable ASCII
-    if (code >= 32 && code <= 126) return char;
-    // Otherwise replace with ?
-    return '?';
-  }).join('');
+  return sanitized
+    .split('')
+    .map((char) => {
+      const code = char.charCodeAt(0);
+      // Allow common whitespace (space, tab, newline, carriage return)
+      if (code === 32 || (code >= 9 && code <= 13)) return char;
+      // Allow printable ASCII
+      if (code >= 32 && code <= 126) return char;
+      // Otherwise replace with ?
+      return '?';
+    })
+    .join('');
 }
 
 /**
@@ -42,8 +45,9 @@ export function printable(text: string): string {
 }
 
 /** JSON from the server, with every string in it made printable. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- the return type is public API: callers read fields off the result
 export function parseServerJson(body: string): any {
-  return JSON.parse(body, (_key, value) => (typeof value === 'string' ? printable(value) : value));
+  return JSON.parse(body, (_key, value: unknown) => (typeof value === 'string' ? printable(value) : value));
 }
 
 /**

@@ -16,7 +16,7 @@ The easiest way to use `SanshainJS` is to integrate it into your `package.json` 
 ```json
 {
   "devDependencies": {
-    "sanshain": "^2.7.0"
+    "sanshain": "^2.7.1"
   },
   "scripts": {
     "prebuild": "sanshain require",
