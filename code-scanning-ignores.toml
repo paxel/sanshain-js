@@ -96,3 +96,12 @@ ignoreUntil = 2027-05-21
 reason = """Scorecard detects fuzzing only through OSS-Fuzz, ClusterFuzzLite and a few \
 property-testing libraries; it knows no Jazzer.js run of its own. .github/workflows/fuzz.yml \
 runs the Jazzer.js targets in fuzz/ with the ts stack of paxel/gates."""
+
+[[IgnoredAlerts]]
+tool = "SonarQube Cloud"
+rule = "tssecurity:S5145"
+path = "src/cli.ts"
+ignoreUntil = 2027-02-18
+reason = """catalog prints the names the service answers through printable(), which shows every \
+control character as ?, so no answer can start a line of its own or recolour the output; \
+tests/cli.test.ts checks it. The taint analysis does not know printable() as a sanitizer."""
