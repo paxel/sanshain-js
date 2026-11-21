@@ -57,6 +57,14 @@ function textOr<T extends string | undefined>(value: string | undefined, fallbac
   return value === undefined || value === '' ? fallback : value;
 }
 
+/**
+ * Text from the service, made safe for a terminal line: a control character (a line break, an
+ * escape sequence) would start a forged line or recolour the output, so it shows as `?`.
+ */
+function printable(text: string): string {
+  return text.replace(/\p{Cc}/gu, '?');
+}
+
 /** What a failure says: its message, or the thrown value itself as text. */
 function messageOf(error: unknown): string {
   const message = (error as { message?: unknown } | null | undefined)?.message;
@@ -676,10 +684,10 @@ program
       const answered: Partial<CatalogPushResponse> = pushed;
       const resources = answered.resources ?? [];
       console.log(
-        `Catalog recorded for ${pushed.system} (${pushed.trunk ? 'main+dev' : 'dev'}): ${String(resources.length)} resources`,
+        `Catalog recorded for ${printable(pushed.system)} (${pushed.trunk ? 'main+dev' : 'dev'}): ${String(resources.length)} resources`,
       );
       for (const resource of resources) {
-        console.log(`  ${resource}`);
+        console.log(`  ${printable(resource)}`);
       }
     } catch (error) {
       console.error(error instanceof StrictFailure ? error.message : `Error pushing catalog: ${messageOf(error)}`);
