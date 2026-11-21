@@ -1103,6 +1103,24 @@ describe('catalog', () => {
     expect(devRun.out).toContain('Catalog recorded for orders-service (dev): 2 resources');
   });
 
+  it('prints what the service answered without its control characters', async () => {
+    const config = writeProject(yaml(), { 'backstage/catalog-info.yaml': CATALOG });
+    const run = await runCli(['-c', config, 'catalog'], (axios) =>
+      axios.put.mockResolvedValue({
+        status: 200,
+        data: JSON.stringify({
+          system: 'orders\nCatalog recorded for evil',
+          trunk: false,
+          resources: ['resource:default/db\u001b[31m'],
+        }),
+        headers: {},
+      }),
+    );
+    expect(run.out).toContain('Catalog recorded for orders?Catalog recorded for evil (dev): 1 resources');
+    expect(run.out).toContain('  resource:default/db?[31m');
+    expect(run.out).not.toContain('\u001b');
+  });
+
   it('a 400 (only an old pre-release service sends one) uses the normal error mapping', async () => {
     const config = writeProject(yaml(), { 'backstage/catalog-info.yaml': CATALOG });
 
