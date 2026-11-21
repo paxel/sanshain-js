@@ -80,3 +80,11 @@ path = "src/cli.ts"
 ignoreUntil = 2027-02-18
 reason = """The command reads the spec and catalogInfo files and writes into the output \
 directories that sanshain.yaml names, relative to it; the file is the user's own."""
+
+[[IgnoredAlerts]]
+tool = "SonarQube Cloud"
+rule = "tssecurity:S8689"
+path = "src/cli.ts"
+ignoreUntil = 2027-02-18
+reason = """The log line names the catalogInfo path from sanshain.yaml. SonarQube Cloud takes \
+the whole file as credential data because it may hold a token; the path is none."""
