@@ -88,3 +88,11 @@ path = "src/cli.ts"
 ignoreUntil = 2027-02-18
 reason = """The log line names the catalogInfo path from sanshain.yaml. SonarQube Cloud takes \
 the whole file as credential data because it may hold a token; the path is none."""
+
+[[IgnoredAlerts]]
+tool = "Scorecard"
+rule = "FuzzingID"
+ignoreUntil = 2027-05-21
+reason = """Scorecard detects fuzzing only through OSS-Fuzz, ClusterFuzzLite and a few \
+property-testing libraries; it knows no Jazzer.js run of its own. .github/workflows/fuzz.yml \
+runs the Jazzer.js targets in fuzz/ with the ts stack of paxel/gates."""
